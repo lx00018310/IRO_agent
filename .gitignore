@@ -1,0 +1,30 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.class
+*.so
+.Python
+env/
+build/
+dist/
+*.egg-info/
+
+# Virtual Environment
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local Databases & Logs
+*.db
+*.sqlite3
+*.log
+audit/
+logs/
+
+# Local configuration
+config.local.json
