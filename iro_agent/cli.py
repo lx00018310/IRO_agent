@@ -15,6 +15,13 @@ from iro_agent.memory.incident_store import IncidentStore
 from iro_agent.llm.glm_client import GlmClient
 from iro_agent.gateway.wechat import WeChatGatewayServer
 
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 
 def init_agent_engine(config: IROConfig) -> GlmClient:
     """组装所有只读读取器并注册到大模型/分析引擎"""
@@ -87,8 +94,9 @@ def cmd_doctor(args):
     checks.append(("审计与记忆数据库 (SQLite)", "正常初始化", audit_ok))
 
     # 7. GLM 模型接口状态
-    glm_mode = "在线 API 模式" if config.glm.api_key and config.glm.api_key != "YOUR_GLM_API_KEY" else "本地离线研判兜底模式"
-    checks.append(("GLM 诊断引擎", glm_mode, True))
+    glm_ok = bool(config.glm.api_key and config.glm.api_key != "YOUR_GLM_API_KEY")
+    glm_detail = f"已就绪 (模型: {config.glm.model})" if glm_ok else "未配置 API Key (需在 config.json 中填入)"
+    checks.append(("GLM-5.3-Flash 接口", glm_detail, glm_ok))
 
     for name, detail, passed in checks:
         status_icon = "[PASS]" if passed else "[WARN/FAIL]"
@@ -99,7 +107,7 @@ def cmd_doctor(args):
     if all_passed:
         print("环境校验通过！系统具备只读诊断作业条件。")
     else:
-        print("注意：部分路径或配置存在警告，在工控机部署时请修正 config.json。")
+        print("注意：部分配置存在未通过项，请先检查并修改 config.json。")
 
 
 def cmd_config(args):
@@ -112,17 +120,22 @@ def cmd_config(args):
 def cmd_chat(args):
     """交互式本地控制台诊断会话"""
     config = get_config()
+
+    if not config.glm.api_key or config.glm.api_key == "YOUR_GLM_API_KEY":
+        print("==================================================")
+        print("  [提示] 尚未配置有效的 GLM API Key！")
+        print("  IRO_agent 严格依赖 GLM-5.3-Flash 进行诊断分析与工具调用。")
+        print("  请先用记事本打开并编辑根目录下的 config.json 文件，")
+        print("  在 'glm': { 'api_key': '填入您的智谱API_KEY' } 中配置后重试。")
+        print("==================================================")
+        return
+
     engine = init_agent_engine(config)
 
     print("==================================================")
     print("  IRO_agent 交互式工业诊断控制台 (CLI Chat)        ")
     print(f"  当前目标工程: {config.project_name}")
-    if not config.glm.api_key or config.glm.api_key == "YOUR_GLM_API_KEY":
-        print("  当前状态: 【本地离线研判模式】 (未在 config.json 中配置 GLM API Key)")
-        print("  - 支持直接提问: 目录路径、版本比对、日志检索、Git提交历史、故障诊断")
-        print("  - 如需启用 GLM-5.3-Flash 智能图文多轮大模型，请编辑根目录 config.json 填入 api_key")
-    else:
-        print(f"  当前状态: 【GLM-5.3-Flash 在线智能模式】 (模型: {config.glm.model})")
+    print(f"  模型引擎: {config.glm.model} (在线模式)")
     print("  提示: 输入故障疑问 (如 '为什么今天系统卡住了？')，输入 'exit' 退出")
     print("==================================================")
 
@@ -167,6 +180,9 @@ def cmd_gateway(args):
     action = args.action
 
     if action == "start":
+        if not config.glm.api_key or config.glm.api_key == "YOUR_GLM_API_KEY":
+            print("[错误] 未配置有效的 GLM API Key，无法启动微信网关服务。请先编辑 config.json 填入 api_key。")
+            return
         engine = init_agent_engine(config)
         server = WeChatGatewayServer(
             host=config.wechat.listen_host,

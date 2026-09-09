@@ -1,46 +1,74 @@
 import json
+from unittest.mock import MagicMock, patch
 import pytest
-from pathlib import Path
-from iro_agent.config import get_config
+from iro_agent.config import get_config, IROConfig
 from iro_agent.cli import init_agent_engine
 from iro_agent.memory.incident_store import IncidentStore
-from iro_agent.gateway.wechat import WeChatGatewayServer, WeChatGatewayHandler
+from iro_agent.gateway.wechat import WeChatGatewayServer
 
 
-def test_scenario_a_why_broken_today():
-    """Scenario A: 昨天好好的，今天为什么不行了？"""
-    config = get_config()
+def test_missing_api_key_raises():
+    """验证未配置 API Key 时坚决拒绝执行并报错，不再进行任何假降级"""
+    config = IROConfig(glm={"api_key": ""})
     engine = init_agent_engine(config)
 
-    question = "昨天系统运行正常，今天早上突然订单看板卡死，怎么回事？"
-    history = [{"role": "user", "content": question}]
-    reply = engine.chat_completion(history)
-
-    assert "诊断结论" in reply
-    assert "业务影响分析" in reply
-    assert "关键事实与研判证据" in reply
-    assert "置信度" in reply
-    # 确保没有泄露密钥
-    assert "SuperSecret" not in reply
-    assert "YOUR_GLM_API_KEY" not in reply
+    with pytest.raises(ValueError, match="未配置有效的 GLM API Key"):
+        engine.chat_completion([{"role": "user", "content": "系统怎么了"}])
 
 
-def test_scenario_b_upgrade_correlation():
-    """Scenario B: 今天的升级导致了这个问题吗？"""
+def test_scenario_a_glm_tool_calling_flow():
+    """验证 GLM 在线 Tool Calling 调度流程"""
     config = get_config()
+    config.glm.api_key = "test_valid_api_key_12345"
     engine = init_agent_engine(config)
 
-    question = "今天部署的最新 WRelease 发布包和这次卡死有关系吗？"
-    history = [{"role": "user", "content": question}]
-    reply = engine.chat_completion(history)
+    # 模拟第 1 轮：模型请求调用 wrelease_compare 工具
+    mock_resp_round1 = MagicMock()
+    mock_resp_round1.status_code = 200
+    mock_resp_round1.json.return_value = {
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "wrelease_list",
+                        "arguments": "{}",
+                    },
+                }],
+            }
+        }]
+    }
 
-    assert "诊断结论" in reply
-    assert "WRelease" in reply or "发布" in reply or "交付" in reply
+    # 模拟第 2 轮：模型获得工具结果后给出最终业务语言诊断
+    mock_resp_round2 = MagicMock()
+    mock_resp_round2.status_code = 200
+    mock_resp_round2.json.return_value = {
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": (
+                    "### 1. 诊断结论\n"
+                    "通过调阅 WRelease 发现今天存在模块更新，工位网络偶发掉线，核心装车流程正常。\n\n"
+                    "### 2. 业务影响分析 (级别: P2)\n"
+                    "仅看板监控刷新延迟。\n\n"
+                    "### 7. 诊断置信度\nHigh"
+                ),
+            }
+        }]
+    }
+
+    with patch("requests.post", side_effect=[mock_resp_round1, mock_resp_round2]):
+        reply = engine.chat_completion([{"role": "user", "content": "今天升级导致卡死了吗？"}])
+        assert "诊断结论" in reply
+        assert "业务影响分析" in reply
+        assert "置信度" in reply
 
 
 def test_scenario_c_historical_similar():
-    """Scenario C: 以前发生过类似情况吗？"""
-    # 预置一条测试历史记录
+    """验证历史相似事故统计"""
     store = IncidentStore()
     store.record_incident({
         "symptom": "WebSocket 掉线，订单看板无法实时刷新",
@@ -55,53 +83,43 @@ def test_scenario_c_historical_similar():
     assert "Network" in stats["domain_breakdown"]
 
 
-def test_scenario_d_fault_domain_and_e_impact_scope():
-    """Scenario D & E: 到底是哪部分坏了？还能不能继续用？"""
+def test_scenario_wechat_gateway_with_glm():
+    """验证微信网关调用 GLM 回送结果"""
     config = get_config()
+    config.glm.api_key = "test_valid_api_key_12345"
     engine = init_agent_engine(config)
 
-    question = "目前到底是前端、后端还是PLC坏了？现场自动装车还能继续跑吗？"
-    history = [{"role": "user", "content": question}]
-    reply = engine.chat_completion(history)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": "### 1. 诊断结论\n经 GLM 诊断分析，当前系统网络稳定，无破坏性异常。",
+            }
+        }]
+    }
 
-    assert "业务影响分析" in reply
-    assert "建议现场排查步骤" in reply
+    with patch("requests.post", return_value=mock_resp):
+        server = WeChatGatewayServer(host="127.0.0.1", port=18089, glm_client=engine)
+        server.start(block=False)
 
+        import urllib.request
+        try:
+            req_data = json.dumps({
+                "from_user": "user_01",
+                "session_id": "sess_01",
+                "content": "@IRO_agent 检查现场状态",
+            }).encode("utf-8")
 
-def test_scenario_wechat_gateway_mock():
-    """验证微信网关通信与端到端脱敏响应"""
-    config = get_config()
-    engine = init_agent_engine(config)
-    server = WeChatGatewayServer(host="127.0.0.1", port=18088, glm_client=engine)
-    server.start(block=False)
-
-    import urllib.request
-    try:
-        # 1. 验证 GET 健康检查
-        with urllib.request.urlopen("http://127.0.0.1:18088", timeout=3) as resp:
-            assert resp.status == 200
-            data = json.loads(resp.read().decode("utf-8"))
-            assert data["status"] == "ok"
-
-        # 2. 验证 POST 微信问答
-        req_data = json.dumps({
-            "from_user": "field_engineer_zhang",
-            "session_id": "group_task013_on_site",
-            "content": "@IRO_agent 现场装车屏幕网络掉线了，帮看下是哪里问题？",
-        }).encode("utf-8")
-
-        req = urllib.request.Request(
-            "http://127.0.0.1:18088",
-            data=req_data,
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            assert resp.status == 200
-            res = json.loads(resp.read().decode("utf-8"))
-            assert "reply" in res
-            assert "诊断结论" in res["reply"]
-            # 验证密钥绝不返回
-            assert "api_key" not in res["reply"]
-            assert "password" not in res["reply"]
-    finally:
-        server.stop()
+            req = urllib.request.Request(
+                "http://127.0.0.1:18089",
+                data=req_data,
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                assert resp.status == 200
+                res = json.loads(resp.read().decode("utf-8"))
+                assert "诊断结论" in res["reply"]
+        finally:
+            server.stop()

@@ -145,11 +145,11 @@ class GlmClient:
                 ]
                 formatted_messages[-1]["content"] = img_content
 
-        # 检查是否配置有效 API Key，若未配置则优雅降级为离线诊断调度器
+        # 检查是否配置有效 API Key
         if not self.glm_cfg.api_key or self.glm_cfg.api_key == "YOUR_GLM_API_KEY":
-            return self._offline_diagnostic_fallback(formatted_messages)
+            raise ValueError("未配置有效的 GLM API Key。请在 config.json 中配置 glm.api_key 后再使用诊断功能。")
 
-        # 正常发起 GLM API 调用
+        # 发起 GLM API 调用
         url = f"{self.glm_cfg.api_base.rstrip('/')}/chat/completions"
         headers = {
             "Authorization": f"Bearer {self.glm_cfg.api_key}",
@@ -169,7 +169,7 @@ class GlmClient:
                 data = resp.json()
             except Exception as e:
                 self.audit.record(tool_name="GlmClient", operation="api_call", result_summary=f"请求失败: {e}", status="ERROR")
-                return self._offline_diagnostic_fallback(formatted_messages)
+                raise RuntimeError(f"GLM-5.3-Flash API 请求失败: {e}")
 
             choice = data["choices"][0]
             message = choice["message"]
@@ -201,120 +201,3 @@ class GlmClient:
                 })
 
         return "诊断轮次达到上限，请缩小问题范围或指定排查维度。"
-
-    def _offline_diagnostic_fallback(self, messages: List[Dict[str, Any]]) -> str:
-        """无网络/本地开发调试离线诊断兜底：具备基础意图识别，支持目录查询、版本比对、日志检索与故障研判"""
-        from iro_agent.analyzer.fault_domain import FaultDomainClassifier
-        from iro_agent.analyzer.impact_scope import ImpactScopeEvaluator
-        from iro_agent.analyzer.interpreter import BusinessLanguageInterpreter
-
-        user_query = ""
-        for m in reversed(messages):
-            if m["role"] == "user":
-                user_query = str(m.get("content", "")).strip()
-                break
-
-        query_lower = user_query.lower()
-        is_diagnostic = any(kw in query_lower for kw in [
-            "卡死", "崩溃", "故障", "异常", "为什么", "怎么回事", "有关系吗", "不行了", "报错", "掉线", "中断", "坏了"
-        ])
-
-        # 1. 意图：查询系统目录与配置信息 (仅在非故障研判问答时触发)
-        if not is_diagnostic and any(kw in query_lower for kw in ["目录", "路径", "配置", "config", "path", "dir", "在哪", "安装位置"]):
-            cfg = self.config
-            root_status = "已就绪" if Path(cfg.project_root).exists() else "未找到路径"
-            wrel_status = "已就绪" if Path(cfg.wrelease_dir).exists() else "未找到路径"
-            log_lines = "\n".join([f"    - {d}" for d in cfg.log_dirs])
-
-            return (
-                "【IRO_agent 系统配置与关键目录】\n"
-                f"- **目标工程**：{cfg.project_name}\n"
-                f"- **项目源码根目录**：`{cfg.project_root}` ({root_status})\n"
-                f"- **WRelease交付包目录**：`{cfg.wrelease_dir}` ({wrel_status})\n"
-                f"- **系统日志检索目录**：\n{log_lines}\n"
-                f"- **配置文件路径**：`config.json` (或 `config.example.json`)\n"
-                f"- **内部审计与记忆存储**：`{cfg.storage.audit_db_path}` / `{cfg.storage.memory_db_path}`\n\n"
-                "💡 **配置提示**：您可直接用记事本编辑项目根目录下的 `config.json`，修改上述目录路径或填入 GLM API Key。"
-            )
-
-        # 2. 意图：纯版本信息查询 (非故障问询)
-        if not is_diagnostic and any(kw in query_lower for kw in ["版本", "wrelease", "发布包", "交付包", "当前版本", "最新版本"]):
-            if "wrelease_list" in self.tool_handlers:
-                try:
-                    releases = self.tool_handlers["wrelease_list"]()
-                    if releases:
-                        latest = releases[0]
-                        diff_text = ""
-                        if len(releases) >= 2 and "wrelease_compare" in self.tool_handlers:
-                            diff = self.tool_handlers["wrelease_compare"](releases[1]["version"], releases[0]["version"])
-                            changed = [m["module"] for m in diff.get("changed_modules", [])]
-                            diff_text = f"\n- **相比上一版本变动模块**：{changed if changed else '无文件变动'}"
-
-                        return (
-                            "【WRelease 交付版本研判】\n"
-                            f"- **已发现发布包总数**：{len(releases)} 个\n"
-                            f"- **当前最新交付版本**：{latest['version']}\n"
-                            f"- **打包交付时间**：{latest.get('created_at', '未知')}\n"
-                            f"- **包含核心模块**：{list(latest.get('modules', {}).keys())}"
-                            f"{diff_text}"
-                        )
-                except Exception as e:
-                    return f"查询 WRelease 交付包出现异常: {e}"
-
-        # 3. 意图：查询源码 Git 提交
-        if any(kw in query_lower for kw in ["git", "提交", "commit", "代码变动", "最近改了什么"]):
-            if "git_recent_commits" in self.tool_handlers:
-                try:
-                    commits = self.tool_handlers["git_recent_commits"](limit=5)
-                    lines = [f"- `{c['commit'][:8]}` ({c['date'][:10]}) {c['summary']}" for c in commits]
-                    return "【Git 源码近期提交记录】\n" + "\n".join(lines)
-                except Exception as e:
-                    return f"查询 Git 记录异常: {e}"
-
-        # 4. 意图：通用故障研判（调用完整分析流水线）
-        wrelease_diff = None
-        if "wrelease_compare" in self.tool_handlers:
-            try:
-                releases = self.tool_handlers["wrelease_list"]()
-                if len(releases) >= 2:
-                    wrelease_diff = self.tool_handlers["wrelease_compare"](
-                        releases[1]["version"], releases[0]["version"]
-                    )
-            except Exception:
-                pass
-
-        error_logs = []
-        if "log_search" in self.tool_handlers:
-            try:
-                error_logs = self.tool_handlers["log_search"](level="WARN", max_results=5)
-            except Exception:
-                pass
-
-        similar_stats = None
-        if "memory_similar_stats" in self.tool_handlers:
-            try:
-                similar_stats = self.tool_handlers["memory_similar_stats"]("卡死")
-            except Exception:
-                pass
-
-        domains = FaultDomainClassifier.evaluate(user_query, wrelease_diff, error_logs)
-        impact = ImpactScopeEvaluator.evaluate(user_query, domains, ["异常"])
-
-        evidence = []
-        if wrelease_diff and wrelease_diff.get("has_changes"):
-            mods = [m["module"] for m in wrelease_diff["changed_modules"]]
-            evidence.append(f"最新交付版本比对显示，模块 {mods} 存在更新发布。")
-        if error_logs:
-            evidence.append(f"工控机后台日志检测到异常信号：{error_logs[0].get('message', '')[:60]}")
-        if not evidence:
-            evidence.append("日志与发布记录未检出破坏性异常，现场服务处于受控状态。")
-
-        conclusion = "根据本地离线分析引擎推断：系统当前未发生崩溃性瘫痪，主流程具备可用性，异常集中于局部展示或网络连接层面。"
-
-        return BusinessLanguageInterpreter.render_report(
-            conclusion=conclusion,
-            impact_scope=impact,
-            evidence_list=evidence,
-            similar_stats=similar_stats,
-            confidence="Medium (离线研判模式)",
-        )
