@@ -23,7 +23,11 @@ SYSTEM_PROMPT = """你是工业现场只读智能诊断助手 IRO_agent。
 **排查建议**：（若有明确物理/配置排查动作则写1条，无必要则不写）
 - 建议1
 
-3. 【禁止事项】：
+3. 【工具调用指引】：
+   - 涉及发布记录与日志异常时序排查时，可直接调用 diagnostic_pipeline 一键获取完整时间线、故障域与影响面。
+   - 严禁盲目发起过多无用轮次，用最少且确凿的工具调用直接推导出答案。
+
+4. 【禁止事项】：
    - 严禁任何客套铺垫（如“根据您提供的信息”、“经过调阅分析...”）。
    - 严禁列出系统各模块完好度清单（严禁逐项列出“PLC正常、发货正常...”）。
    - 严禁长篇大论，回答必须短小精悍、一针见血。
@@ -67,6 +71,28 @@ class GlmClient:
                     "name": "wrelease_list",
                     "description": "列出所有可用的 WRelease 历史版本包",
                     "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "wrelease_running",
+                    "description": "探测现场工控机当前正在运行的 WRelease 版本（若无指针则降级标明）",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "wrelease_git_map",
+                    "description": "将指定的 WRelease 版本映射关联到对应的 Git Commit 提交记录与改动说明",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "version": {"type": "string", "description": "版本号，如 v8.13.6"},
+                        },
+                        "required": ["version"],
+                    },
                 },
             },
             {
@@ -125,13 +151,43 @@ class GlmClient:
                     },
                 },
             },
+            {
+                "type": "function",
+                "function": {
+                    "name": "db_query",
+                    "description": "安全只读执行数据库 SELECT 查询（自动拦截写操作与多语句，返回数据行字典列表）",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "只读 SQL SELECT 语句"},
+                            "max_rows": {"type": "integer", "description": "最多返回行数，默认 20"},
+                        },
+                        "required": ["query"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "diagnostic_pipeline",
+                    "description": "执行端到端自动化诊断流水线：自动串联聚合发布与日志时序(Timeline)、分析故障域(FaultDomain)、评估业务受损级别(P0~P3)与历史相似故障统计",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "symptom": {"type": "string", "description": "故障现象或疑问描述"},
+                            "log_keyword": {"type": "string", "description": "可选的错误日志检索关键词"},
+                        },
+                        "required": ["symptom"],
+                    },
+                },
+            },
         ]
 
     def chat_completion(
         self,
         messages: List[Dict[str, Any]],
         image_path: Optional[str] = None,
-        max_tool_rounds: int = 5,
+        max_tool_rounds: int = 8,
     ) -> str:
         """执行多轮对话与工具调用循环"""
         # 脱敏所有用户输入
@@ -170,6 +226,7 @@ class GlmClient:
         headers = {
             "Authorization": f"Bearer {self.glm_cfg.api_key}",
             "Content-Type": "application/json",
+            "Connection": "close",
         }
 
         for _ in range(max_tool_rounds):
@@ -180,13 +237,27 @@ class GlmClient:
                 "tool_choice": "auto",
                 "max_tokens": 400,
             }
-            try:
-                resp = requests.post(url, headers=headers, json=payload, timeout=self.glm_cfg.timeout)
-                resp.raise_for_status()
-                data = resp.json()
-            except Exception as e:
-                self.audit.record(tool_name="GlmClient", operation="api_call", result_summary=f"请求失败: {e}", status="ERROR")
-                raise RuntimeError(f"GLM-5.3-Flash API 请求失败: {e}")
+            import time
+            data = None
+            last_err = None
+            for attempt in range(3):
+                try:
+                    resp = requests.post(
+                        url,
+                        headers=headers,
+                        json=payload,
+                        timeout=self.glm_cfg.timeout,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    break
+                except Exception as e:
+                    last_err = e
+                    time.sleep(1.0 * (attempt + 1))
+
+            if data is None:
+                self.audit.record(tool_name="GlmClient", operation="api_call", result_summary=f"请求失败: {last_err}", status="ERROR")
+                raise RuntimeError(f"GLM-5.3-Flash API 请求失败: {last_err}")
 
             choice = data["choices"][0]
             message = choice["message"]
@@ -194,8 +265,12 @@ class GlmClient:
 
             if not tool_calls:
                 # 最终回答
-                final_text = message.get("content", "")
-                return redact_secrets(final_text)
+                final_text = (message.get("content") or "").strip()
+                if final_text:
+                    return redact_secrets(final_text)
+                # 若无工具调用且内容为空，强制注入催促提示
+                formatted_messages.append({"role": "user", "content": "请基于以上查询结果，直接给出最终的简短结论。"})
+                continue
 
             # 执行模型请求的只读工具
             formatted_messages.append(message)
@@ -212,8 +287,8 @@ class GlmClient:
                     tool_res = {"error": f"工具 {func_name} 未实现"}
 
                 tool_res_str = json.dumps(tool_res, ensure_ascii=False)
-                if len(tool_res_str) > 2500:
-                    tool_res_str = tool_res_str[:2500] + "...[已截断过长事实数据]"
+                if len(tool_res_str) > 1200:
+                    tool_res_str = tool_res_str[:1200] + "...[已截断过长事实数据]"
 
                 formatted_messages.append({
                     "role": "tool",

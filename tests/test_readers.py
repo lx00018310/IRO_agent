@@ -52,7 +52,7 @@ def test_wrelease_reader_task013():
     latest = reader.get_latest_release()
     assert latest is not None
     assert "version" in latest
-    assert "modules" in latest
+    assert "modules_summary" in latest
 
     # 测试比对两个版本
     if len(releases) >= 2:
@@ -62,3 +62,15 @@ def test_wrelease_reader_task013():
         assert diff["from_release"] == ver_a
         assert diff["to_release"] == ver_b
         assert "changed_modules" in diff
+
+    # 测试运行版本探测 (无论是否有指针均能正常返回并标注)
+    running = reader.get_running_release()
+    assert running is not None
+    assert "is_running_detected" in running
+    assert "version" in running
+
+    # 测试版本到 Git 映射
+    git_map = reader.map_release_to_git_commit(latest["version"])
+    assert git_map is not None
+    assert "commit" in git_map
+    assert "version" in git_map

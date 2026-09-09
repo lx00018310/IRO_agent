@@ -48,6 +48,18 @@ def extract_image_path(text: str) -> tuple[Optional[str], str]:
     return None, text
 
 
+def _is_fault_incident(user_question: str, reply: str) -> bool:
+    """判定是否属于真实故障事件，避免日常查询（如查目录、查版本）污染事故记忆库"""
+    fault_keywords = [
+        "报错", "异常", "故障", "卡死", "卡住", "掉线", "中断", "失败",
+        "拒绝", "拒收", "暂停", "超时", "死锁", "无法", "重置", "坏了",
+        "error", "exception", "failed", "crash", "timeout"
+    ]
+    has_fault_kw = any(kw in (user_question + " " + reply).lower() for kw in fault_keywords)
+    has_diag_structure = "**核心结论**" in reply
+    return has_fault_kw and has_diag_structure
+
+
 def init_agent_engine(config: IROConfig) -> GlmClient:
     """组装所有只读读取器并注册到大模型/分析引擎"""
     audit = AuditLogger()
@@ -56,16 +68,24 @@ def init_agent_engine(config: IROConfig) -> GlmClient:
     wrelease_reader = WReleaseReader(audit_logger=audit)
     log_reader = LogReader(audit_logger=audit)
     memory_store = IncidentStore()
+    db_reader = DatabaseReader(db_config=config.database, audit_logger=audit)
+
+    from iro_agent.analyzer.orchestrator import DiagnosticOrchestrator
+    orchestrator = DiagnosticOrchestrator(audit_logger=audit)
 
     client = GlmClient(glm_cfg=config.glm, audit_logger=audit)
 
     # 注册只读工具
     client.register_tool_handler("wrelease_list", lambda: wrelease_reader.list_available_releases())
+    client.register_tool_handler("wrelease_running", lambda: wrelease_reader.get_running_release())
+    client.register_tool_handler("wrelease_git_map", lambda version: wrelease_reader.map_release_to_git_commit(version))
     client.register_tool_handler("wrelease_compare", lambda ver_a, ver_b: wrelease_reader.compare_releases(ver_a, ver_b))
     client.register_tool_handler("log_search", lambda **kwargs: log_reader.search_logs(**kwargs))
     client.register_tool_handler("git_recent_commits", lambda limit=20: git_reader.get_recent_commits(limit=limit))
     client.register_tool_handler("code_search", lambda query: code_reader.search_code(query))
     client.register_tool_handler("memory_similar_stats", lambda keyword: memory_store.get_similar_incident_stats(keyword))
+    client.register_tool_handler("db_query", lambda query, max_rows=20: db_reader.execute_query(query, max_rows=max_rows))
+    client.register_tool_handler("diagnostic_pipeline", lambda symptom, log_keyword=None: orchestrator.run_pipeline(symptom=symptom, log_keyword=log_keyword))
 
     return client
 
@@ -136,10 +156,24 @@ def cmd_doctor(args):
 
 
 def cmd_config(args):
-    """查看或打印配置"""
+    """查看当前生效配置（强制敏感凭证脱敏）"""
+    import copy
     config = get_config()
-    print("当前有效配置内容:")
-    print(json.dumps(config.model_dump(), indent=2, ensure_ascii=False))
+    cfg_data = copy.deepcopy(config.model_dump())
+
+    def _mask_sensitive(d: dict):
+        sensitive_keys = {"password", "api_key", "token", "aes_key", "secret", "private_key"}
+        for k, v in d.items():
+            if isinstance(v, dict):
+                _mask_sensitive(v)
+            elif isinstance(v, str) and k.lower() in sensitive_keys and v:
+                d[k] = "********"
+
+    _mask_sensitive(cfg_data)
+    print("==================================================")
+    print("  IRO_agent 当前有效配置 (敏感字段已自动掩码脱敏)   ")
+    print("==================================================")
+    print(json.dumps(cfg_data, indent=2, ensure_ascii=False))
 
 
 def cmd_chat(args):
@@ -190,13 +224,14 @@ def cmd_chat(args):
 
             print(reply)
 
-            # 自动沉淀至故障记忆
-            memory_store.record_incident({
-                "symptom": clean_prompt[:100],
-                "user_question": user_input,
-                "status": "investigated",
-                "resolution_summary": reply[:300],
-            })
+            # 仅当确认属于真实故障事件时，才沉淀至故障记忆库，防止普通查询与闲聊污染
+            if _is_fault_incident(user_input, reply):
+                memory_store.record_incident({
+                    "symptom": clean_prompt[:100],
+                    "user_question": user_input,
+                    "status": "investigated",
+                    "resolution_summary": reply[:300],
+                })
 
         except (KeyboardInterrupt, EOFError):
             print("\n退出诊断控制台。")

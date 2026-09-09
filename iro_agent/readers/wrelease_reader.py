@@ -16,8 +16,8 @@ class WReleaseReader:
         self.delivery_dir = validate_read_path(raw_dir, self.config)
         self.audit = audit_logger or AuditLogger()
 
-    def list_available_releases(self) -> List[Dict[str, Any]]:
-        """扫描交付目录下的所有 .wrelease 发布包，按创建时间排序"""
+    def list_available_releases(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """扫描交付目录下的所有 .wrelease 发布包，按创建时间排序，返回精简元数据"""
         if not self.delivery_dir.exists():
             return []
 
@@ -25,11 +25,15 @@ class WReleaseReader:
         for file in self.delivery_dir.glob("*.wrelease"):
             info = self.get_release_info(file.name)
             if info:
-                releases.append(info)
+                releases.append({
+                    "file_name": info["file_name"],
+                    "version": info["version"],
+                    "created_at": info.get("created_at"),
+                    "modules_summary": list(info.get("modules", {}).keys()),
+                })
 
-        # 优先按 manifest 中的 createdAt 排序，若无则按文件修改时间排序
         releases.sort(key=lambda x: x.get("created_at") or "", reverse=True)
-        return releases
+        return releases[:limit]
 
     def get_release_info(self, file_name_or_version: str) -> Optional[Dict[str, Any]]:
         """安全读取单个 .wrelease 包中的 manifest.json 元数据"""
@@ -136,3 +140,114 @@ class WReleaseReader:
         """获取最新生成的交付包"""
         releases = self.list_available_releases()
         return releases[0] if releases else None
+
+    def get_running_release(self) -> Optional[Dict[str, Any]]:
+        """探测现场当前正在运行的 WRelease 版本"""
+        import os
+        candidates = []
+        env_file = os.environ.get("TASK013_BACKEND_VERSION_FILE")
+        if env_file:
+            candidates.append(Path(env_file))
+
+        # 工控机标准路径 %ProgramData%\WLZN\TASK013\backend\current-version.json
+        prog_data = os.environ.get("ProgramData", "C:\\ProgramData")
+        candidates.append(Path(prog_data) / "WLZN" / "TASK013" / "backend" / "current-version.json")
+
+        # 项目本地路径
+        candidates.append(Path(self.config.project_root) / "deployment_control" / "native" / "current-version.json")
+        candidates.append(self.delivery_dir.parent / "current-version.json")
+
+        running_version = None
+        pointer_source = None
+        for cand in candidates:
+            if cand.is_file():
+                try:
+                    with open(cand, "r", encoding="utf-8-sig") as f:
+                        data = json.load(f)
+                        if "version" in data and data["version"]:
+                            running_version = data["version"].strip()
+                            pointer_source = str(cand)
+                            break
+                except Exception:
+                    pass
+
+        if running_version:
+            info = self.get_release_info(running_version)
+            if info:
+                info["is_running_detected"] = True
+                info["pointer_source"] = pointer_source
+                return info
+
+        # 未检测到生产指针时，降级为最新生成交付包并明确标注
+        latest = self.get_latest_release()
+        if latest:
+            latest["is_running_detected"] = False
+            latest["pointer_source"] = "未检测到生产运行指针 (降级为最新交付包)"
+        return latest
+
+    def map_release_to_git_commit(self, file_name_or_version: str) -> Optional[Dict[str, Any]]:
+        """将 WRelease 版本映射关联到 Git Commit"""
+        info = self.get_release_info(file_name_or_version)
+        if not info:
+            return None
+
+        version = info.get("version", "")
+        created_at = info.get("created_at")
+
+        from iro_agent.readers.git_reader import GitReader
+        try:
+            gr = GitReader(audit_logger=self.audit)
+            commits = gr.get_recent_commits(limit=50)
+
+            # 策略1: 在 commit 提交说明中精确匹配版本号 (如 v8.13.6 或 8.13.6)
+            ver_clean = version.lstrip("v")
+            for c in commits:
+                if version.lower() in c["summary"].lower() or ver_clean in c["summary"]:
+                    return {
+                        "version": version,
+                        "matched_by": "summary",
+                        "commit": c["commit"],
+                        "author": c["author"],
+                        "date": c["date"],
+                        "summary": c["summary"],
+                    }
+
+            # 策略2: 按发布时间比对最相近的提交 (提交时间早于或相近于 created_at)
+            if created_at and commits:
+                from datetime import datetime
+                try:
+                    rel_dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                    for c in commits:
+                        c_dt = datetime.fromisoformat(c["date"].replace("Z", "+00:00"))
+                        if c_dt <= rel_dt:
+                            return {
+                                "version": version,
+                                "matched_by": "timestamp_closest",
+                                "commit": c["commit"],
+                                "author": c["author"],
+                                "date": c["date"],
+                                "summary": c["summary"],
+                            }
+                except Exception:
+                    pass
+
+            # 策略3: 降级返回最新提交
+            if commits:
+                c = commits[0]
+                return {
+                    "version": version,
+                    "matched_by": "latest_fallback",
+                    "commit": c["commit"],
+                    "author": c["author"],
+                    "date": c["date"],
+                    "summary": c["summary"],
+                }
+        except Exception as e:
+            self.audit.record(
+                tool_name="WReleaseReader",
+                operation="map_release_to_git_commit",
+                target=version,
+                result_summary=f"映射异常: {e}",
+                status="ERROR",
+            )
+        return None

@@ -60,15 +60,24 @@ class CodeReader:
     ) -> List[Dict[str, Any]]:
         """在只读代码目录中搜索关键字，支持按子目录与后缀过滤"""
         search_base = validate_read_path(self.root_dir / sub_dir, self.config)
-        valid_exts = set(extensions) if extensions else {".ts", ".js", ".vue", ".json", ".sql", ".py", ".md"}
+        valid_exts = set(extensions) if extensions else {
+            ".ts", ".js", ".vue", ".json", ".sql", ".py", ".md",
+            ".java", ".kt", ".xml", ".yml", ".yaml", ".properties", ".env",
+            ".sh", ".bat", ".ps1",
+        }
         skip_dirs = {".git", "node_modules", "dist", ".cache", "cache"}
+
+        from iro_agent.security.redactor import redact_secrets
 
         results = []
         for root, dirs, files in os.walk(search_base):
             dirs[:] = [d for d in dirs if d not in skip_dirs]
             for file in files:
                 ext = Path(file).suffix.lower()
-                if valid_exts and ext not in valid_exts:
+                # 兼容 .env 文件的特殊命名
+                if file.startswith(".env") or ext == ".env":
+                    pass
+                elif valid_exts and ext not in valid_exts:
                     continue
                 file_path = Path(root) / file
                 try:
@@ -76,10 +85,11 @@ class CodeReader:
                         for line_no, line in enumerate(f, start=1):
                             if query.lower() in line.lower():
                                 rel_path = str(file_path.relative_to(self.root_dir))
+                                clean_content = redact_secrets(line.strip()[:200])
                                 results.append({
                                     "file": rel_path,
                                     "line": line_no,
-                                    "content": line.strip()[:200],
+                                    "content": clean_content,
                                 })
                                 if len(results) >= max_results:
                                     break

@@ -94,6 +94,20 @@ def load_config(config_path: Optional[str] = None) -> IROConfig:
     else:
         _CONFIG_INSTANCE = IROConfig()
 
+    # 环境变量覆盖（安全优先级高于文件明文）
+    if os.environ.get("IRO_GLM_API_KEY"):
+        _CONFIG_INSTANCE.glm.api_key = os.environ["IRO_GLM_API_KEY"]
+    if os.environ.get("IRO_DB_PASSWORD"):
+        _CONFIG_INSTANCE.database.password = os.environ["IRO_DB_PASSWORD"]
+    if os.environ.get("IRO_DB_HOST"):
+        _CONFIG_INSTANCE.database.host = os.environ["IRO_DB_HOST"]
+    if os.environ.get("IRO_DB_USER"):
+        _CONFIG_INSTANCE.database.user = os.environ["IRO_DB_USER"]
+    if os.environ.get("IRO_WECHAT_TOKEN"):
+        _CONFIG_INSTANCE.wechat.token = os.environ["IRO_WECHAT_TOKEN"]
+    if os.environ.get("IRO_WECHAT_AES_KEY"):
+        _CONFIG_INSTANCE.wechat.aes_key = os.environ["IRO_WECHAT_AES_KEY"]
+
     return _CONFIG_INSTANCE
 
 

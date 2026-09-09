@@ -97,3 +97,36 @@ def test_interpreter_rendering():
     assert "09 工位工控网络偶发断开" in report
     assert "**关键依据**" in report
     assert "ECONNRESET" in report
+
+
+def test_diagnostic_orchestrator():
+    """验证 DiagnosticOrchestrator 编排器能完整输出时间线、故障域与影响范围"""
+    from iro_agent.analyzer.orchestrator import DiagnosticOrchestrator
+
+    orch = DiagnosticOrchestrator()
+    res = orch.run_pipeline(
+        symptom="工位09看板掉线",
+        log_keyword="ECONNRESET",
+        max_logs=5,
+    )
+
+    assert "timeline" in res
+    assert "primary_fault_domain" in res
+    assert "impact_scope" in res
+    assert "severity" in res["impact_scope"]
+    assert len(res["timeline"]) > 0
+
+
+def test_incident_governance():
+    """验证 _is_fault_incident 精确过滤普通查询，仅对真实故障入库"""
+    from iro_agent.cli import _is_fault_incident
+
+    # 普通查询 -> False
+    assert not _is_fault_incident("告诉我目录在哪里", "TASK-013 项目目录位于：D:/当前工作/...")
+    assert not _is_fault_incident("当前运行的是什么版本？", "当前运行版本为 v8.13.6")
+    assert not _is_fault_incident("你好", "您好，我是工业现场只读智能诊断助手。")
+
+    # 真实故障排查 -> True
+    fault_q = "为什么今天 10 号月台任务暂停了？"
+    fault_reply = "**核心结论**：系统拦截了不属于当前订单的物料，任务已暂停。\n\n**关键依据**：\n- 日志记录错误"
+    assert _is_fault_incident(fault_q, fault_reply)
