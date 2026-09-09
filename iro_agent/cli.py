@@ -148,8 +148,8 @@ def cmd_chat(args):
                 "resolution_summary": reply[:300],
             })
 
-        except KeyboardInterrupt:
-            print("\n强制退出。")
+        except (KeyboardInterrupt, EOFError):
+            print("\n退出诊断控制台。")
             break
         except Exception as e:
             print(f"\n[诊断异常] {e}")
