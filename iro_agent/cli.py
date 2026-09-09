@@ -3,6 +3,7 @@ import sys
 import json
 import argparse
 from pathlib import Path
+from typing import Optional, Tuple
 from iro_agent.config import get_config, load_config, IROConfig
 from iro_agent.security.policy import validate_read_path
 from iro_agent.security.audit import AuditLogger
@@ -15,12 +16,36 @@ from iro_agent.memory.incident_store import IncidentStore
 from iro_agent.llm.glm_client import GlmClient
 from iro_agent.gateway.wechat import WeChatGatewayServer
 
+import re
+
 if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding="utf-8")
         sys.stderr.reconfigure(encoding="utf-8")
     except Exception:
         pass
+
+
+def extract_image_path(text: str) -> tuple[Optional[str], str]:
+    """从用户输入中提取本地存在的图片路径（支持拖入、双引号包裹），返回 (图片路径, 剥离图片后的提问文本)"""
+    # 1. 匹配双引号或单引号包裹的路径
+    quoted_pattern = r'["\']([^"\']+\.(?:jpg|jpeg|png|bmp|webp))["\']'
+    match = re.search(quoted_pattern, text, re.IGNORECASE)
+    if match:
+        candidate = Path(match.group(1).strip())
+        if candidate.is_file():
+            clean_text = (text[:match.start()] + " " + text[match.end():]).strip()
+            return str(candidate.resolve()), clean_text or "请结合此现场图片分析故障原因并给出诊断建议。"
+
+    # 2. 匹配无引号的路径（支持 Windows 盘符与路径，直到空格或句末）
+    unquoted_pattern = r'([a-zA-Z]:[\\/][^\s<>:"|?*]+\.(?:jpg|jpeg|png|bmp|webp)|\b[^\s<>:"|?*]+\.(?:jpg|jpeg|png|bmp|webp))'
+    for m in re.finditer(unquoted_pattern, text, re.IGNORECASE):
+        candidate = Path(m.group(1).strip())
+        if candidate.is_file():
+            clean_text = (text[:m.start()] + " " + text[m.end():]).strip()
+            return str(candidate.resolve()), clean_text or "请结合此现场图片分析故障原因并给出诊断建议。"
+
+    return None, text
 
 
 def init_agent_engine(config: IROConfig) -> GlmClient:
@@ -151,17 +176,23 @@ def cmd_chat(args):
                 print("退出诊断控制台。")
                 break
 
-            history.append({"role": "user", "content": user_input})
+            extracted_img, clean_prompt = extract_image_path(user_input)
+            img_to_use = extracted_img or (args.image if hasattr(args, "image") else None)
+
+            if extracted_img:
+                print(f"[已识别现场截图]: {extracted_img}")
+
+            history.append({"role": "user", "content": clean_prompt})
             print("\n正在查询诊断...")
 
-            reply = engine.chat_completion(history, image_path=args.image if hasattr(args, "image") else None)
+            reply = engine.chat_completion(history, image_path=img_to_use)
             history.append({"role": "assistant", "content": reply})
 
             print(reply)
 
             # 自动沉淀至故障记忆
             memory_store.record_incident({
-                "symptom": user_input[:100],
+                "symptom": clean_prompt[:100],
                 "user_question": user_input,
                 "status": "investigated",
                 "resolution_summary": reply[:300],

@@ -146,9 +146,18 @@ class GlmClient:
         if image_path:
             with open(image_path, "rb") as img_file:
                 b64 = base64.b64encode(img_file.read()).decode("utf-8")
+                ext = Path(image_path).suffix.lower()
+                mime_map = {
+                    ".png": "image/png",
+                    ".jpg": "image/jpeg",
+                    ".jpeg": "image/jpeg",
+                    ".webp": "image/webp",
+                    ".bmp": "image/bmp",
+                }
+                mime = mime_map.get(ext, "image/jpeg")
                 img_content = [
                     {"type": "text", "text": formatted_messages[-1]["content"]},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                    {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
                 ]
                 formatted_messages[-1]["content"] = img_content
 

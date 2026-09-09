@@ -121,3 +121,54 @@ def test_scenario_wechat_gateway_with_glm():
                 assert "**核心结论**" in res["reply"]
         finally:
             server.stop()
+
+
+def test_extract_image_path_and_multimodal_flow(tmp_path):
+    """验证图片路径自动识别与 GLM 多模态图文调用"""
+    from iro_agent.cli import extract_image_path
+
+    # 创建一个临时测试图片
+    img_file = tmp_path / "mock_fault.jpg"
+    img_file.write_bytes(b"\xff\xd8\xff\xe0mock_image_bytes")
+
+    # 1. 测试无引号路径提取
+    raw_input_1 = f"{img_file} 告诉我怎么会这样？"
+    extracted_path, clean_text = extract_image_path(raw_input_1)
+    assert extracted_path == str(img_file.resolve())
+    assert clean_text == "告诉我怎么会这样？"
+
+    # 2. 测试带双引号路径提取（如 Windows 拖入带空格的路径）
+    raw_input_2 = f'"{img_file}" 屏幕红字报错排查'
+    extracted_path_2, clean_text_2 = extract_image_path(raw_input_2)
+    assert extracted_path_2 == str(img_file.resolve())
+    assert clean_text_2 == "屏幕红字报错排查"
+
+    # 3. 验证多模态调用传递给 GLM 的 payload
+    config = get_config()
+    config.glm.api_key = "test_key_valid"
+    engine = init_agent_engine(config)
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": "**核心结论**：系统拦截了非本车物料。",
+            }
+        }]
+    }
+
+    with patch("requests.post", return_value=mock_resp) as mock_post:
+        reply = engine.chat_completion(
+            messages=[{"role": "user", "content": clean_text}],
+            image_path=extracted_path,
+        )
+        assert "**核心结论**" in reply
+
+        # 检查 payload 是否包含图片 base64
+        called_payload = mock_post.call_args[1]["json"]
+        last_msg = called_payload["messages"][-1]
+        assert isinstance(last_msg["content"], list)
+        assert last_msg["content"][1]["type"] == "image_url"
+        assert "data:image/jpeg;base64," in last_msg["content"][1]["image_url"]["url"]
