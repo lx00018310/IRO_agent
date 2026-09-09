@@ -1,4 +1,4 @@
-﻿# Python
+# Python
 __pycache__/
 *.py[cod]
 *.class
@@ -28,3 +28,4 @@ logs/
 
 # Local configuration
 config.local.json
+config.json

@@ -71,21 +71,21 @@ _CONFIG_INSTANCE: Optional[IROConfig] = None
 
 
 def load_config(config_path: Optional[str] = None) -> IROConfig:
-    """加载单一配置文件。优先顺序：显式参数 -> 环境变量 IRO_CONFIG_PATH -> 本地 config.json -> 本地 config.example.json -> 默认配置"""
+    """加载单一配置文件。绝对不覆盖用户文件，严格只读读取。"""
     global _CONFIG_INSTANCE
+    base_dir = Path(__file__).resolve().parent.parent
     target_path: Optional[Path] = None
 
     if config_path:
-        target_path = Path(config_path)
+        target_path = Path(config_path).resolve()
     elif os.environ.get("IRO_CONFIG_PATH"):
-        target_path = Path(os.environ["IRO_CONFIG_PATH"])
-    elif Path("config.json").exists():
-        target_path = Path("config.json")
-    elif Path("config.example.json").exists():
-        # 自动生成本地 config.json
-        import shutil
-        shutil.copy("config.example.json", "config.json")
-        target_path = Path("config.json")
+        target_path = Path(os.environ["IRO_CONFIG_PATH"]).resolve()
+    elif (base_dir / "config.json").is_file():
+        target_path = base_dir / "config.json"
+    elif Path("config.json").is_file():
+        target_path = Path("config.json").resolve()
+    elif (base_dir / "config.example.json").is_file():
+        target_path = base_dir / "config.example.json"
 
     if target_path and target_path.exists():
         with open(target_path, "r", encoding="utf-8") as f:

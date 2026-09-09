@@ -6,14 +6,6 @@ echo   IRO_agent (Industrial Read-Only Diagnostic Agent)
 echo =======================================================
 echo.
 
-:: 自动生成初始配置文件
-if not exist "config.json" (
-    if exist "config.example.json" (
-        copy "config.example.json" "config.json" >nul
-        echo [INFO] Initialized config.json from config.example.json.
-    )
-)
-
 set "PYTHON_EXE="
 if exist ".venv\Scripts\python.exe" (
     set "PYTHON_EXE=.venv\Scripts\python.exe"
