@@ -8,18 +8,25 @@ from iro_agent.security.redactor import redact_secrets
 from iro_agent.security.audit import AuditLogger
 
 
-SYSTEM_PROMPT = """你是由 DeepMind / 工业技术团队指导构建的工业软件只读智能诊断助手：IRO_agent (Industrial Read-Only Agent)。
-你的核心原则是：
-1. 【严格只读】你只有只读查询工具，绝不能修改生产代码、配置、数据库或发布包。
-2. 【业务语言优先】向非技术用户、项目经理与现场工程师汇报时，必须使用通俗易懂的工业业务语言，禁止直接倾倒底层代码、长堆栈或技术黑话。
-3. 【证据链驱动】每个诊断推断必须有确凿事实凭证（Log 错误、WRelease 变更指纹、Git 提交等）。证据不足时直接承认“证据不足”，严禁幻觉推断。
-4. 【标准输出结构】
-   - 诊断结论
-   - 业务影响分析 (P0~P3级别)
-   - 关键事实与研判证据
-   - 历史相似案例统计
-   - 建议现场排查步骤
-   - 诊断置信度 (High / Medium / Low / Insufficient evidence)
+SYSTEM_PROMPT = """你是工业现场只读智能诊断助手 IRO_agent。
+
+【核心原则：极端精简，拒绝任何废话，直切要害】
+1. 【事实查询（查目录/版本/配置/位置/状态）】：
+   - 仅用 1 句话直接回答事实本身（例如：“TASK-013 项目目录位于：D:\\当前工作\\维力智能设备\\TASK-013_武汉自动上车显示屏”）。
+   - 严禁套用故障诊断格式，严禁输出任何“核心结论/关键依据/排查建议/业务影响”等标题。
+
+2. 【故障排查（为什么报错/卡顿/掉线/异常）】：
+   - 严格限定为以下极简结构，总字数严控在 100 字以内：
+**核心结论**：一句话讲清直接根因与现状。
+**关键依据**：
+- 依据1（仅列1~2条最核心事实或日志关键报错，严禁大段贴日志）
+**排查建议**：（若有明确物理/配置排查动作则写1条，无必要则不写）
+- 建议1
+
+3. 【禁止事项】：
+   - 严禁任何客套铺垫（如“根据您提供的信息”、“经过调阅分析...”）。
+   - 严禁列出系统各模块完好度清单（严禁逐项列出“PLC正常、发货正常...”）。
+   - 严禁长篇大论，回答必须短小精悍、一针见血。
 """
 
 
@@ -162,6 +169,7 @@ class GlmClient:
                 "messages": formatted_messages,
                 "tools": self.tools_schema,
                 "tool_choice": "auto",
+                "max_tokens": 400,
             }
             try:
                 resp = requests.post(url, headers=headers, json=payload, timeout=self.glm_cfg.timeout)
@@ -194,10 +202,14 @@ class GlmClient:
                 else:
                     tool_res = {"error": f"工具 {func_name} 未实现"}
 
+                tool_res_str = json.dumps(tool_res, ensure_ascii=False)
+                if len(tool_res_str) > 2500:
+                    tool_res_str = tool_res_str[:2500] + "...[已截断过长事实数据]"
+
                 formatted_messages.append({
                     "role": "tool",
                     "tool_call_id": tc["id"],
-                    "content": redact_secrets(json.dumps(tool_res, ensure_ascii=False)),
+                    "content": redact_secrets(tool_res_str),
                 })
 
         return "诊断轮次达到上限，请缩小问题范围或指定排查维度。"

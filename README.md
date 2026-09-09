@@ -1,6 +1,6 @@
 # IRO_agent (Industrial Read-Only Agent) V0.1
 
-工业软件只读智能诊断助手。专为工业现场软件（首个真实验证目标：**TASK-013 武汉自动上车系统**）设计的证据驱动型根因分析与业务语言解释引擎。
+工业软件只读智能诊断助手。专为工业现场软件设计的证据驱动型根因分析与业务语言解释引擎。
 
 ---
 
@@ -63,42 +63,6 @@ uv pip install -e .
 ### 2. 配置文件说明 (单一配置文件)
 
 复制 `config.example.json` 为 `config.json`：
-
-```json
-{
-  "project_name": "TASK-013",
-  "project_root": "D:/当前工作/维力智能设备/TASK-013_武汉自动上车显示屏",
-  "wrelease_dir": "D:/当前工作/维力智能设备/TASK-013_武汉自动上车显示屏/deployment_control/native/delivery",
-  "log_dirs": [
-    "D:/当前工作/维力智能设备/TASK-013_武汉自动上车显示屏/deployment_control",
-    "D:/当前工作/维力智能设备/TASK-013_武汉自动上车显示屏/cache/260829日志"
-  ],
-  "allowed_paths": [],
-  "database": {
-    "host": "127.0.0.1",
-    "port": 5432,
-    "user": "readonly_user",
-    "password": "your_readonly_password",
-    "database": "ordersys",
-    "connect_timeout": 5
-  },
-  "glm": {
-    "api_key": "YOUR_GLM_API_KEY",
-    "api_base": "https://open.bigmodel.cn/api/paas/v4",
-    "model": "glm-5.3-flash",
-    "timeout": 60
-  },
-  "wechat": {
-    "enabled": false,
-    "listen_host": "0.0.0.0",
-    "listen_port": 8080
-  },
-  "storage": {
-    "audit_db_path": "iro_agent_audit.db",
-    "memory_db_path": "iro_agent_memory.db"
-  }
-}
-```
 
 > **工控机部署须知**：未来迁移至远程工控机时，**无需改动任何代码**，只需修改 `config.json` 中的各路径、日志地址与数据库连接配置即可。
 

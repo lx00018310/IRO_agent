@@ -1,18 +1,18 @@
 {
   "project_name": "TASK-013",
-  "project_root": "D:/当前工作/维力智能设备/TASK-013_武汉自动上车显示屏",
-  "wrelease_dir": "D:/当前工作/维力智能设备/TASK-013_武汉自动上车显示屏/deployment_control/native/delivery",
+  "project_root": "CHANGE_ME_HERE",
+  "wrelease_dir": "CHANGE_ME_HERE",
   "log_dirs": [
-    "D:/当前工作/维力智能设备/TASK-013_武汉自动上车显示屏/deployment_control",
-    "D:/当前工作/维力智能设备/TASK-013_武汉自动上车显示屏/cache/260829日志"
+    "CHANGE_ME_HERE",
+    "CHANGE_ME_HERE"
   ],
   "allowed_paths": [],
   "database": {
-    "host": "127.0.0.1",
-    "port": 5432,
-    "user": "readonly_user",
-    "password": "your_readonly_password",
-    "database": "ordersys",
+    "host": "CHANGE_ME_HERE",
+    "port": CHANGE_ME_HERE,
+    "user": "CHANGE_ME_HERE",
+    "password": "CHANGE_ME_HERE",
+    "database": "CHANGE_ME_HERE",
     "connect_timeout": 5
   },
   "glm": {
@@ -25,9 +25,9 @@
     "enabled": false,
     "listen_host": "0.0.0.0",
     "listen_port": 8080,
-    "webhook_url": "",
-    "token": "",
-    "aes_key": ""
+    "webhook_url": "CHANGE_ME_HERE",
+    "token": "CHANGE_ME_HERE",
+    "aes_key": "CHANGE_ME_HERE"
   },
   "storage": {
     "audit_db_path": "iro_agent_audit.db",

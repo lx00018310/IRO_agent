@@ -93,9 +93,7 @@ def test_interpreter_rendering():
         confidence="High",
     )
 
-    assert "### 1. 诊断结论" in report
-    assert "### 2. 业务影响分析 (级别: P2)" in report
-    assert "### 3. 关键事实与研判证据" in report
-    assert "### 5. 历史相似案例统计" in report
-    assert "### 6. 建议现场排查步骤" in report
-    assert "### 7. 诊断置信度" in report
+    assert "**核心结论**" in report
+    assert "09 工位工控网络偶发断开" in report
+    assert "**关键依据**" in report
+    assert "ECONNRESET" in report

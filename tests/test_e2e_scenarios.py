@@ -50,11 +50,10 @@ def test_scenario_a_glm_tool_calling_flow():
             "message": {
                 "role": "assistant",
                 "content": (
-                    "### 1. 诊断结论\n"
-                    "通过调阅 WRelease 发现今天存在模块更新，工位网络偶发掉线，核心装车流程正常。\n\n"
-                    "### 2. 业务影响分析 (级别: P2)\n"
-                    "仅看板监控刷新延迟。\n\n"
-                    "### 7. 诊断置信度\nHigh"
+                    "**核心结论**：今天升级未导致主装车流程卡死，核心调度正常。\n\n"
+                    "**关键依据**：\n"
+                    "- 模块更新主要涉及前端静态与非阻断接口\n"
+                    "- 日志未见主流程数据库死锁或崩溃"
                 ),
             }
         }]
@@ -62,9 +61,8 @@ def test_scenario_a_glm_tool_calling_flow():
 
     with patch("requests.post", side_effect=[mock_resp_round1, mock_resp_round2]):
         reply = engine.chat_completion([{"role": "user", "content": "今天升级导致卡死了吗？"}])
-        assert "诊断结论" in reply
-        assert "业务影响分析" in reply
-        assert "置信度" in reply
+        assert "**核心结论**" in reply
+        assert "核心调度正常" in reply
 
 
 def test_scenario_c_historical_similar():
@@ -95,7 +93,7 @@ def test_scenario_wechat_gateway_with_glm():
         "choices": [{
             "message": {
                 "role": "assistant",
-                "content": "### 1. 诊断结论\n经 GLM 诊断分析，当前系统网络稳定，无破坏性异常。",
+                "content": "**核心结论**：经 GLM 诊断分析，当前系统网络稳定，无破坏性异常。",
             }
         }]
     }
@@ -120,6 +118,6 @@ def test_scenario_wechat_gateway_with_glm():
             with urllib.request.urlopen(req, timeout=5) as resp:
                 assert resp.status == 200
                 res = json.loads(resp.read().decode("utf-8"))
-                assert "诊断结论" in res["reply"]
+                assert "**核心结论**" in res["reply"]
         finally:
             server.stop()

@@ -32,7 +32,7 @@ def init_agent_engine(config: IROConfig) -> GlmClient:
     log_reader = LogReader(audit_logger=audit)
     memory_store = IncidentStore()
 
-    client = GlmClient(audit_logger=audit)
+    client = GlmClient(glm_cfg=config.glm, audit_logger=audit)
 
     # 注册只读工具
     client.register_tool_handler("wrelease_list", lambda: wrelease_reader.list_available_releases())
@@ -152,7 +152,7 @@ def cmd_chat(args):
                 break
 
             history.append({"role": "user", "content": user_input})
-            print("\n正在调阅 WRelease 部署包、运行日志与 Git 变更事实，生成业务研判报告...\n")
+            print("\n正在查询诊断...")
 
             reply = engine.chat_completion(history, image_path=args.image if hasattr(args, "image") else None)
             history.append({"role": "assistant", "content": reply})
