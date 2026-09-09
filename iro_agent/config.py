@@ -82,7 +82,10 @@ def load_config(config_path: Optional[str] = None) -> IROConfig:
     elif Path("config.json").exists():
         target_path = Path("config.json")
     elif Path("config.example.json").exists():
-        target_path = Path("config.example.json")
+        # 自动生成本地 config.json
+        import shutil
+        shutil.copy("config.example.json", "config.json")
+        target_path = Path("config.json")
 
     if target_path and target_path.exists():
         with open(target_path, "r", encoding="utf-8") as f:

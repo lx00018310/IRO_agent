@@ -1,0 +1,36 @@
+{
+  "project_name": "TASK-013",
+  "project_root": "D:/当前工作/维力智能设备/TASK-013_武汉自动上车显示屏",
+  "wrelease_dir": "D:/当前工作/维力智能设备/TASK-013_武汉自动上车显示屏/deployment_control/native/delivery",
+  "log_dirs": [
+    "D:/当前工作/维力智能设备/TASK-013_武汉自动上车显示屏/deployment_control",
+    "D:/当前工作/维力智能设备/TASK-013_武汉自动上车显示屏/cache/260829日志"
+  ],
+  "allowed_paths": [],
+  "database": {
+    "host": "127.0.0.1",
+    "port": 5432,
+    "user": "readonly_user",
+    "password": "your_readonly_password",
+    "database": "ordersys",
+    "connect_timeout": 5
+  },
+  "glm": {
+    "api_key": "YOUR_GLM_API_KEY",
+    "api_base": "https://open.bigmodel.cn/api/paas/v4",
+    "model": "glm-5.3-flash",
+    "timeout": 60
+  },
+  "wechat": {
+    "enabled": false,
+    "listen_host": "0.0.0.0",
+    "listen_port": 8080,
+    "webhook_url": "",
+    "token": "",
+    "aes_key": ""
+  },
+  "storage": {
+    "audit_db_path": "iro_agent_audit.db",
+    "memory_db_path": "iro_agent_memory.db"
+  }
+}

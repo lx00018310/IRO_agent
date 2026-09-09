@@ -1,5 +1,6 @@
 import json
 import base64
+from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable
 import requests
 from iro_agent.config import get_config, GlmConfig
@@ -202,7 +203,7 @@ class GlmClient:
         return "诊断轮次达到上限，请缩小问题范围或指定排查维度。"
 
     def _offline_diagnostic_fallback(self, messages: List[Dict[str, Any]]) -> str:
-        """无网络/本地开发调试离线诊断兜底"""
+        """无网络/本地开发调试离线诊断兜底：具备基础意图识别，支持目录查询、版本比对、日志检索与故障研判"""
         from iro_agent.analyzer.fault_domain import FaultDomainClassifier
         from iro_agent.analyzer.impact_scope import ImpactScopeEvaluator
         from iro_agent.analyzer.interpreter import BusinessLanguageInterpreter
@@ -210,10 +211,67 @@ class GlmClient:
         user_query = ""
         for m in reversed(messages):
             if m["role"] == "user":
-                user_query = str(m.get("content", ""))
+                user_query = str(m.get("content", "")).strip()
                 break
 
-        # 自动调用已注册的只读工具收集证据
+        query_lower = user_query.lower()
+        is_diagnostic = any(kw in query_lower for kw in [
+            "卡死", "崩溃", "故障", "异常", "为什么", "怎么回事", "有关系吗", "不行了", "报错", "掉线", "中断", "坏了"
+        ])
+
+        # 1. 意图：查询系统目录与配置信息 (仅在非故障研判问答时触发)
+        if not is_diagnostic and any(kw in query_lower for kw in ["目录", "路径", "配置", "config", "path", "dir", "在哪", "安装位置"]):
+            cfg = self.config
+            root_status = "已就绪" if Path(cfg.project_root).exists() else "未找到路径"
+            wrel_status = "已就绪" if Path(cfg.wrelease_dir).exists() else "未找到路径"
+            log_lines = "\n".join([f"    - {d}" for d in cfg.log_dirs])
+
+            return (
+                "【IRO_agent 系统配置与关键目录】\n"
+                f"- **目标工程**：{cfg.project_name}\n"
+                f"- **项目源码根目录**：`{cfg.project_root}` ({root_status})\n"
+                f"- **WRelease交付包目录**：`{cfg.wrelease_dir}` ({wrel_status})\n"
+                f"- **系统日志检索目录**：\n{log_lines}\n"
+                f"- **配置文件路径**：`config.json` (或 `config.example.json`)\n"
+                f"- **内部审计与记忆存储**：`{cfg.storage.audit_db_path}` / `{cfg.storage.memory_db_path}`\n\n"
+                "💡 **配置提示**：您可直接用记事本编辑项目根目录下的 `config.json`，修改上述目录路径或填入 GLM API Key。"
+            )
+
+        # 2. 意图：纯版本信息查询 (非故障问询)
+        if not is_diagnostic and any(kw in query_lower for kw in ["版本", "wrelease", "发布包", "交付包", "当前版本", "最新版本"]):
+            if "wrelease_list" in self.tool_handlers:
+                try:
+                    releases = self.tool_handlers["wrelease_list"]()
+                    if releases:
+                        latest = releases[0]
+                        diff_text = ""
+                        if len(releases) >= 2 and "wrelease_compare" in self.tool_handlers:
+                            diff = self.tool_handlers["wrelease_compare"](releases[1]["version"], releases[0]["version"])
+                            changed = [m["module"] for m in diff.get("changed_modules", [])]
+                            diff_text = f"\n- **相比上一版本变动模块**：{changed if changed else '无文件变动'}"
+
+                        return (
+                            "【WRelease 交付版本研判】\n"
+                            f"- **已发现发布包总数**：{len(releases)} 个\n"
+                            f"- **当前最新交付版本**：{latest['version']}\n"
+                            f"- **打包交付时间**：{latest.get('created_at', '未知')}\n"
+                            f"- **包含核心模块**：{list(latest.get('modules', {}).keys())}"
+                            f"{diff_text}"
+                        )
+                except Exception as e:
+                    return f"查询 WRelease 交付包出现异常: {e}"
+
+        # 3. 意图：查询源码 Git 提交
+        if any(kw in query_lower for kw in ["git", "提交", "commit", "代码变动", "最近改了什么"]):
+            if "git_recent_commits" in self.tool_handlers:
+                try:
+                    commits = self.tool_handlers["git_recent_commits"](limit=5)
+                    lines = [f"- `{c['commit'][:8]}` ({c['date'][:10]}) {c['summary']}" for c in commits]
+                    return "【Git 源码近期提交记录】\n" + "\n".join(lines)
+                except Exception as e:
+                    return f"查询 Git 记录异常: {e}"
+
+        # 4. 意图：通用故障研判（调用完整分析流水线）
         wrelease_diff = None
         if "wrelease_compare" in self.tool_handlers:
             try:

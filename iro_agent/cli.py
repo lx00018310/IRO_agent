@@ -117,7 +117,13 @@ def cmd_chat(args):
     print("==================================================")
     print("  IRO_agent 交互式工业诊断控制台 (CLI Chat)        ")
     print(f"  当前目标工程: {config.project_name}")
-    print("  提示: 输入故障疑问 (如 '为什么今天系统卡住了？')，输入 'exit' 或 'quit' 退出")
+    if not config.glm.api_key or config.glm.api_key == "YOUR_GLM_API_KEY":
+        print("  当前状态: 【本地离线研判模式】 (未在 config.json 中配置 GLM API Key)")
+        print("  - 支持直接提问: 目录路径、版本比对、日志检索、Git提交历史、故障诊断")
+        print("  - 如需启用 GLM-5.3-Flash 智能图文多轮大模型，请编辑根目录 config.json 填入 api_key")
+    else:
+        print(f"  当前状态: 【GLM-5.3-Flash 在线智能模式】 (模型: {config.glm.model})")
+    print("  提示: 输入故障疑问 (如 '为什么今天系统卡住了？')，输入 'exit' 退出")
     print("==================================================")
 
     memory_store = IncidentStore()
