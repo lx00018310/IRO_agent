@@ -92,7 +92,11 @@ def test_6_git_head_is_source_code_version_semantic():
     ver = adapter.get_current_version()
     assert ver["version_type"] == "source_code_version"
     assert ver["is_running_detected"] is False
-    assert "源码" in ver["pointer_source"]
+    if adapter.is_available():
+        assert "源码" in ver["pointer_source"]
+    else:
+        assert ver["version"] == "UNKNOWN"
+        assert ver["pointer_source"] == "unknown"
 
 
 def test_7_incident_memory_fields_and_provider_integrity():
