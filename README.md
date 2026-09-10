@@ -56,8 +56,12 @@ IRO_agent/
 
 ### 1. 安装与依赖
 
+根据现场工控机环境选择以下方式之一：
+
+#### 方式 A：原生 Python（适用于已安装标准 Python 的环境）
+
 ```bash
-# 1. 使用原生 Python 创建虚拟环境 (推荐 Python 3.10+)
+# 1. 创建虚拟环境 (推荐 Python 3.10+)
 python -m venv .venv
 
 # 2. 激活虚拟环境
@@ -71,6 +75,30 @@ source .venv/Scripts/activate
 # 3. 安装项目依赖
 pip install -e .
 ```
+
+#### 方式 B：单文件 `uv.exe`（推荐现场嵌入式精简 Python / 离线环境）
+
+> 工业现场若使用 `embed-amd64` 精简版 Python（默认缺失 `venv` 和 `pip` 模块），直接使用单文件免安装的 `uv.exe` 可规避 Python 环境缺失问题。
+
+- **联网工控机一键安装**：
+  ```bash
+  # 下载并加入当前会话 PATH
+  powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+  export PATH="$HOME/.local/bin:$PATH"
+
+  # 创建虚拟环境并安装依赖
+  uv venv .venv
+  source .venv/Scripts/activate
+  uv pip install -e .
+  ```
+
+- **离线内网工控机（直接拷贝单文件）**：
+  将外网下载的单个 [`uv.exe`](https://github.com/astral-sh/uv/releases) 复制到项目根目录下，直接执行：
+  ```bash
+  ./uv.exe venv .venv
+  source .venv/Scripts/activate
+  ./uv.exe pip install -e .
+  ```
 
 ### 2. 配置文件说明 (单一配置文件)
 
