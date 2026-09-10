@@ -164,6 +164,17 @@ iro-agent gateway start --type http
 iro-agent gateway status
 ```
 
+### 6. 工控机版本更新与快捷启动
+
+- **工控机拉取更新（推荐命令）**：
+  工控机作为生产运行端，为避免历史分叉或文件冲突导致 `git pull` 中断，推荐每次更新时执行以下命令强制对齐远程仓库（本地被 `.gitignore` 保护的 `config.json` 与 `.venv` 环境不会被覆盖）：
+  ```bash
+  git fetch origin main && git reset --hard origin/main
+  ```
+
+- **Windows 一键交互菜单**：
+  在 Windows 下可直接双击运行根目录的 `start_iro_agent.bat`，通过数字菜单直接呼出环境体检、交互对话、网关服务启动等功能。
+
 ---
 
 ## 自动化测试
