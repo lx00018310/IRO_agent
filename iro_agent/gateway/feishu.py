@@ -150,12 +150,13 @@ class FeishuGateway(GatewayAdapter):
             # 1. 若获取到了机器人 open_id 进行精确比对
             if self.bot_open_id and open_id and open_id == self.bot_open_id:
                 return True
-            # 2. 匹配名称
-            if m_name and m_name.lower() in bot_names:
-                return True
-            # 3. 匹配名称中包含 iro
-            if m_name and ("iro" in m_name.lower() or "诊断" in m_name):
-                return True
+            # 2. 匹配名称完全相同或相互包含
+            if m_name:
+                m_lower = m_name.lower()
+                if m_lower in bot_names or m_lower in self.bot_name.lower() or self.bot_name.lower() in m_lower:
+                    return True
+                if "iro" in m_lower or "诊断" in m_name or "机器人" in m_name:
+                    return True
         return False
 
     def normalize_event(self, event_data: Any) -> Optional[GatewayMessage]:
@@ -232,6 +233,8 @@ class FeishuGateway(GatewayAdapter):
         if not msg:
             return
 
+        print(f"\n[飞书网关] 收到事件推送 (chat_type={msg.chat_type}, msg_type={msg.message_type})")
+
         session_id = f"feishu:{msg.chat_type}:{msg.chat_id}"
         target_project = (
             self.config.project_mapping.feishu.get(msg.chat_id, {}).get("project", self.config.project_name)
@@ -244,6 +247,7 @@ class FeishuGateway(GatewayAdapter):
         clean_text = msg.text
         if msg.chat_type == "group":
             if not self.config.feishu.receive_group_at:
+                print("[飞书过滤] 已配置忽略群聊消息 (receive_group_at=false)")
                 return
 
             # 如果是纯图片消息但没有 @ 机器人：暂存到 session 缓存，静默等待紧随的文字提问 (P1)
@@ -253,19 +257,23 @@ class FeishuGateway(GatewayAdapter):
                     if tmp_img:
                         self.session_recent_images[session_id] = {"image_path": tmp_img, "timestamp": time.time()}
                         self.dedup.mark_completed(msg.event_id, msg.message_id)
-                        logger.info(f"已缓存群聊待关联图片: session={session_id}, path={tmp_img}")
+                        print(f"[飞书图片] 暂存群聊待关联现场截图: {tmp_img}")
                 return
 
             # 如果群聊消息未 @ 机器人本身（比如 @张三），坚决静默忽略！
             if not is_at_bot:
+                print(f"[飞书过滤] 群聊消息未 @本机器人 (当前机器人: '{self.bot_name}')，已静默忽略。")
                 return
 
             clean_text = clean_mention_text(msg.text, mentions, bot_name=self.bot_name)
+            print(f"[飞书群聊] 收到群聊提问: '{clean_text}'")
 
         elif msg.chat_type == "p2p":
             if not self.config.feishu.receive_private:
+                print("[飞书过滤] 已配置忽略私聊消息 (receive_private=false)")
                 return
             clean_text = msg.text.strip()
+            print(f"[飞书单聊] 收到用户私信: '{clean_text}'")
 
         # 2. 状态化去重防重锁 (P0)
         if not self.dedup.acquire_lock(event_id=msg.event_id, message_id=msg.message_id):
@@ -312,16 +320,20 @@ class FeishuGateway(GatewayAdapter):
 
             reply_text = "收到请求，正在诊断中..."
             if self.glm_client:
-                reply_text = self.glm_client.chat_completion(history, image_path=tmp_image_to_use)
+                print(f"[飞书研判] 正在调用 GLM-5.3-Flash 开展只读诊断...")
+                reply_text = self.glm_client.chat_completion(history, image_path=tmp_image_to_use, verbose=True)
                 history.append({"role": "assistant", "content": reply_text})
 
             # 4. 敏感凭据脱敏与回送
             safe_reply = redact_secrets(reply_text)
+            print(f"[飞书回复] 正在向飞书回送诊断报告 (chat_id={msg.chat_id})...")
             send_ok = self.send_message(chat_id=msg.chat_id, text=safe_reply, reply_to_message_id=msg.message_id)
 
             if send_ok:
+                print(f"[飞书成功] 诊断报告已成功回送至飞书！")
                 self.dedup.mark_completed(event_id=msg.event_id, message_id=msg.message_id)
             else:
+                print(f"[飞书异常] 消息回送失败，请检查应用发送消息权限！")
                 self.dedup.mark_failed(event_id=msg.event_id, message_id=msg.message_id, error="send_message failed")
 
             self.audit.record(
