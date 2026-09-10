@@ -30,6 +30,7 @@
     "enabled": true,
     "app_id": "YOUR_FEISHU_APP_ID",
     "app_secret": "YOUR_FEISHU_APP_SECRET",
+    "bot_name": "IRO_agent",
     "receive_group_at": true,
     "receive_private": true
   },
