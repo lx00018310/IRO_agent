@@ -57,10 +57,19 @@ IRO_agent/
 ### 1. 安装与依赖
 
 ```bash
-# 创建虚拟环境并安装依赖
-uv venv .venv
-.venv\Scripts\activate
-uv pip install -e .
+# 1. 使用原生 Python 创建虚拟环境 (推荐 Python 3.10+)
+python -m venv .venv
+
+# 2. 激活虚拟环境
+# Git Bash:
+source .venv/Scripts/activate
+# Windows PowerShell:
+.venv\Scripts\Activate.ps1
+# Windows CMD:
+.venv\Scripts\activate.bat
+
+# 3. 安装项目依赖
+pip install -e .
 ```
 
 ### 2. 配置文件说明 (单一配置文件)
@@ -77,6 +86,7 @@ uv pip install -e .
     "enabled": true,
     "app_id": "cli_xxxxxxxxxxxx",
     "app_secret": "xxxxxxxxxxxxxxxxxxxxxxxx",
+    "bot_name": "IRO_agent",
     "receive_group_at": true,
     "receive_private": true
   }
