@@ -245,6 +245,9 @@ class GlmClient:
                         json=payload,
                         timeout=self.glm_cfg.timeout,
                     )
+                    if resp.status_code in (401, 403):
+                        last_err = requests.exceptions.HTTPError(f"认证失败 ({resp.status_code}): {resp.text}", response=resp)
+                        break
                     resp.raise_for_status()
                     data = resp.json()
                     break

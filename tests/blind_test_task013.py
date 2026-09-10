@@ -8,8 +8,8 @@ from iro_agent.analyzer.orchestrator import DiagnosticOrchestrator
 
 if sys.platform == "win32":
     try:
-        sys.stdout.reconfigure(encoding="utf-8")
-        sys.stderr.reconfigure(encoding="utf-8")
+        sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
+        sys.stderr.reconfigure(encoding="utf-8", line_buffering=True)
     except Exception:
         pass
 
@@ -55,6 +55,7 @@ BLIND_TEST_CASES = [
 
 def run_blind_tests():
     config = get_config()
+    config.glm.timeout = 3
     print("==================================================")
     print("  TASK-013 真实数据 5 个核心问题盲测验证 (双版本提供者与证据完整性)")
     print(f"  目标工程: {config.project_name}")

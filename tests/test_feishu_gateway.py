@@ -81,13 +81,14 @@ def test_02_private_text_message(sample_config, mock_glm_client, tmp_path):
     assert chat_id == "oc_p2p_chat_01"
 
 
-def test_03_group_without_at_ignored(sample_config, mock_glm_client, tmp_path):
-    """Test 3: 群聊无 @ 消息必须静默忽略"""
+def test_03_group_without_at_or_at_others_ignored(sample_config, mock_glm_client, tmp_path):
+    """Test 3: 群聊无 @ 或 @他人 (如 @张三) 必须严格静默忽略 (P0)"""
     dedup_db = str(tmp_path / "test_dedup.db")
     gw = FeishuGateway(config=sample_config, glm_client=mock_glm_client, dedup_db_path=dedup_db)
     gw.send_message = MagicMock()
 
-    fake_event = {
+    # 情况 A: 完全无 @
+    fake_event_no_at = {
         "header": {"event_id": "evt_grp_no_at"},
         "event": {
             "sender": {"sender_id": {"open_id": "ou_user_test_02"}},
@@ -102,10 +103,28 @@ def test_03_group_without_at_ignored(sample_config, mock_glm_client, tmp_path):
             },
         },
     }
+    gw._on_message_receive(fake_event_no_at)
+    assert not mock_glm_client.chat_completion.called
+    assert not gw.send_message.called
 
-    gw._on_message_receive(fake_event)
-
-    # 验证未调用模型，未回送消息
+    # 情况 B: @他人 (例如 @张三，非本机器人)
+    fake_event_at_other = {
+        "header": {"event_id": "evt_grp_at_other"},
+        "event": {
+            "sender": {"sender_id": {"open_id": "ou_user_test_02"}},
+            "message": {
+                "message_id": "om_msg_002_other",
+                "chat_id": "oc_group_chat_01",
+                "chat_type": "group",
+                "message_type": "text",
+                "content": json.dumps({"text": "@_user_99 张三今天订单怎么了？"}),
+                "mentions": [{"key": "@_user_99", "name": "张三"}],
+                "create_time": "1725920150",
+            },
+        },
+    }
+    gw._on_message_receive(fake_event_at_other)
+    # 验证依然坚决不调用模型，不回送消息
     assert not mock_glm_client.chat_completion.called
     assert not gw.send_message.called
 
@@ -197,71 +216,105 @@ def test_05_followup_multiturn_session(sample_config, mock_glm_client, tmp_path)
     assert history[2]["content"] == "那这个问题以前发生过吗？"
 
 
-def test_06_image_message_download_and_cleanup(sample_config, mock_glm_client, tmp_path):
-    """Test 6: 现场图片安全下载、多模态调用与即用即删生命周期"""
+def test_06_image_two_phase_association_and_cleanup(sample_config, mock_glm_client, tmp_path):
+    """Test 6: 现场图片两阶段交互（先在群发图暂存、随后文字提问关联消费）及即用即删生命周期 (P1)"""
     dedup_db = str(tmp_path / "test_dedup.db")
     gw = FeishuGateway(config=sample_config, glm_client=mock_glm_client, dedup_db_path=dedup_db)
     gw.send_message = MagicMock(return_value=True)
 
-    # 创建一个模拟下载临时图片并返回路径
-    dummy_img = tmp_path / "test_screen.png"
+    dummy_img = tmp_path / "test_two_phase.png"
     dummy_img.write_bytes(b"\x89PNG\r\n\x1a\nfake_image_data")
-
     gw.download_resource = MagicMock(return_value=str(dummy_img))
 
-    evt = {
-        "header": {"event_id": "evt_img_01"},
+    # 阶段 1: 用户在群聊中先发了一张现场截图，但并未 @ 机器人
+    evt_img_only = {
+        "header": {"event_id": "evt_img_phase1"},
         "event": {
             "sender": {"sender_id": {"open_id": "ou_user_05"}},
             "message": {
-                "message_id": "om_msg_img",
-                "chat_id": "oc_p2p_img",
-                "chat_type": "p2p",
+                "message_id": "om_msg_img_1",
+                "chat_id": "oc_group_two_phase",
+                "chat_type": "group",
                 "message_type": "image",
-                "content": json.dumps({"image_key": "img_v2_fake_key"}),
+                "content": json.dumps({"image_key": "img_phase1_key"}),
+                "mentions": [],
             },
         },
     }
+    gw._on_message_receive(evt_img_only)
 
-    gw._on_message_receive(evt)
+    # 验证阶段 1: 静默暂存，不惊扰群聊
+    assert not mock_glm_client.chat_completion.called
+    assert not gw.send_message.called
+    session_id = "feishu:group:oc_group_two_phase"
+    assert session_id in gw.session_recent_images
+    assert gw.session_recent_images[session_id]["image_path"] == str(dummy_img)
+    assert os.path.exists(str(dummy_img))  # 此时文件必须依然保留
 
-    # 验证带 image_path 传给了 GLM
+    # 阶段 2: 隔了几秒，用户在群里 @IRO_agent 提问
+    evt_text_ask = {
+        "header": {"event_id": "evt_text_phase2"},
+        "event": {
+            "sender": {"sender_id": {"open_id": "ou_user_05"}},
+            "message": {
+                "message_id": "om_msg_text_2",
+                "chat_id": "oc_group_two_phase",
+                "chat_type": "group",
+                "message_type": "text",
+                "content": json.dumps({"text": "@_user_1 这个报错是什么意思？"}),
+                "mentions": [{"key": "@_user_1", "name": "IRO_agent"}],
+            },
+        },
+    }
+    gw._on_message_receive(evt_text_ask)
+
+    # 验证阶段 2: 成功将先前暂存的截图关联送入 GLM，并回送诊断
     assert mock_glm_client.chat_completion.called
-    assert mock_glm_client.chat_completion.call_args[1]["image_path"] == str(dummy_img)
+    call_kwargs = mock_glm_client.chat_completion.call_args[1]
+    assert call_kwargs["image_path"] == str(dummy_img)
+    assert gw.send_message.called
 
-    # 验证处理完毕后，临时图片已被物理删除
+    # 验证消费完成后，图片从近期缓存中移除且本地临时文件被物理删除
+    assert session_id not in gw.session_recent_images
     assert not os.path.exists(str(dummy_img))
 
 
-def test_07_event_deduplication(sample_config, mock_glm_client, tmp_path):
-    """Test 7: 重复事件幂等拦截"""
+def test_07_stateful_dedup_and_failure_retry(sample_config, mock_glm_client, tmp_path):
+    """Test 7: 状态化去重与失败重试机制 (P0: 失败不丢消息，成功后幂等防重)"""
     dedup_db = str(tmp_path / "test_dedup.db")
     gw = FeishuGateway(config=sample_config, glm_client=mock_glm_client, dedup_db_path=dedup_db)
-    gw.send_message = MagicMock(return_value=True)
 
+    # 1. 模拟首次投递，但发送失败（如飞书网络抖动）
+    gw.send_message = MagicMock(return_value=False)
     evt = {
-        "header": {"event_id": "evt_dup_999"},
+        "header": {"event_id": "evt_fail_then_retry"},
         "event": {
-            "sender": {"sender_id": {"open_id": "ou_user_dup"}},
+            "sender": {"sender_id": {"open_id": "ou_user_retry"}},
             "message": {
-                "message_id": "om_msg_dup_999",
-                "chat_id": "oc_dup",
+                "message_id": "om_msg_retry_1",
+                "chat_id": "oc_retry",
                 "chat_type": "p2p",
                 "message_type": "text",
-                "content": json.dumps({"text": "测试重复投递"}),
+                "content": json.dumps({"text": "测试失败重发"}),
             },
         },
     }
 
-    # 首次触发
     gw._on_message_receive(evt)
-    assert mock_glm_client.chat_completion.call_count == 1
     assert gw.send_message.call_count == 1
+    # 状态应为 FAILED
+    assert gw.dedup.get_status("evt_fail_then_retry") == "FAILED"
 
-    # 重复触发相同 event_id
+    # 2. 飞书长连接重试投递该事件，此时网络恢复（send_message 成功）
+    gw.send_message = MagicMock(return_value=True)
     gw._on_message_receive(evt)
-    # 调用次数不增加
-    assert mock_glm_client.chat_completion.call_count == 1
+    # 允许重新接管处理，状态更新为 COMPLETED
+    assert gw.send_message.call_count == 1
+    assert gw.dedup.get_status("evt_fail_then_retry") == "COMPLETED"
+
+    # 3. 第三次重复投递已被 COMPLETED 的事件，严格拦截
+    gw._on_message_receive(evt)
+    # send_message 调用次数依然为 1，未重复发送
     assert gw.send_message.call_count == 1
 
 

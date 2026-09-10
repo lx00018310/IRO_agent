@@ -17,12 +17,16 @@ def test_missing_api_key_raises():
 
 
 def test_scenario_a_glm_tool_calling_flow():
-    """验证 GLM 在线 Tool Calling 调度流程"""
+    """验证 GLM 在线 Tool Calling 调度流程与 version_* 统一抽象工具执行"""
     config = get_config()
     config.glm.api_key = "test_valid_api_key_12345"
     engine = init_agent_engine(config)
 
-    # 模拟第 1 轮：模型请求调用 wrelease_compare 工具
+    # 1. 严格断言：必须注册了新的统一版本工具
+    assert "version_recent" in engine.tool_handlers
+    assert "wrelease_list" not in engine.tool_handlers
+
+    # 模拟第 1 轮：模型请求调用 version_recent 工具
     mock_resp_round1 = MagicMock()
     mock_resp_round1.status_code = 200
     mock_resp_round1.json.return_value = {
@@ -34,15 +38,15 @@ def test_scenario_a_glm_tool_calling_flow():
                     "id": "call_1",
                     "type": "function",
                     "function": {
-                        "name": "wrelease_list",
-                        "arguments": "{}",
+                        "name": "version_recent",
+                        "arguments": "{\"limit\": 5}",
                     },
                 }],
             }
         }]
     }
 
-    # 模拟第 2 轮：模型获得工具结果后给出最终业务语言诊断
+    # 模拟第 2 轮：模型获得真实工具结果后给出最终业务语言诊断
     mock_resp_round2 = MagicMock()
     mock_resp_round2.status_code = 200
     mock_resp_round2.json.return_value = {
@@ -59,10 +63,18 @@ def test_scenario_a_glm_tool_calling_flow():
         }]
     }
 
-    with patch("requests.post", side_effect=[mock_resp_round1, mock_resp_round2]):
+    with patch("requests.post", side_effect=[mock_resp_round1, mock_resp_round2]) as mock_post:
         reply = engine.chat_completion([{"role": "user", "content": "今天升级导致卡死了吗？"}])
         assert "**核心结论**" in reply
         assert "核心调度正常" in reply
+
+        # 2. 严格断言：验证第二轮发给模型的消息中包含了工具的真实执行结果，绝非 Tool not found 报错
+        assert mock_post.call_count == 2
+        round2_call_body = mock_post.call_args_list[1][1].get("json") or json.loads(mock_post.call_args_list[1][1].get("data", "{}"))
+        tool_msgs = [m for m in round2_call_body["messages"] if m.get("role") == "tool"]
+        assert len(tool_msgs) == 1
+        assert tool_msgs[0]["tool_call_id"] == "call_1"
+        assert "Error: Tool" not in tool_msgs[0]["content"]
 
 
 def test_scenario_c_historical_similar():

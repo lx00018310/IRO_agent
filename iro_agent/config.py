@@ -31,6 +31,7 @@ class FeishuConfig(BaseModel):
     enabled: bool = True
     app_id: str = ""
     app_secret: str = ""
+    bot_name: str = "IRO_agent"
     receive_group_at: bool = True
     receive_private: bool = True
 
@@ -123,6 +124,10 @@ def load_config(config_path: Optional[str] = None) -> IROConfig:
     feishu_app_secret = os.environ.get("FEISHU_APP_SECRET") or os.environ.get("IRO_FEISHU_APP_SECRET")
     if feishu_app_secret:
         _CONFIG_INSTANCE.feishu.app_secret = feishu_app_secret
+
+    feishu_bot_name = os.environ.get("FEISHU_BOT_NAME") or os.environ.get("IRO_FEISHU_BOT_NAME")
+    if feishu_bot_name:
+        _CONFIG_INSTANCE.feishu.bot_name = feishu_bot_name
 
     if os.environ.get("IRO_GATEWAY_TYPE"):
         _CONFIG_INSTANCE.gateway.type = os.environ["IRO_GATEWAY_TYPE"]
