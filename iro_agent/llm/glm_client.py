@@ -286,7 +286,7 @@ class GlmClient:
                 else:
                     tool_res = {"error": f"工具 {func_name} 未实现"}
 
-                tool_res_str = json.dumps(tool_res, ensure_ascii=False)
+                tool_res_str = json.dumps(tool_res, ensure_ascii=False, default=str)
                 if len(tool_res_str) > 1200:
                     tool_res_str = tool_res_str[:1200] + "...[已截断过长事实数据]"
 

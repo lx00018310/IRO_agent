@@ -80,7 +80,7 @@ class IncidentStore:
 
         impact_scope_val = data.get("impact_scope")
         if isinstance(impact_scope_val, (dict, list)):
-            impact_scope_str = json.dumps(impact_scope_val, ensure_ascii=False)
+            impact_scope_str = json.dumps(impact_scope_val, ensure_ascii=False, default=str)
         else:
             impact_scope_str = str(impact_scope_val or "")
 

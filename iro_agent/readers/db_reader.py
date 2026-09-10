@@ -66,7 +66,17 @@ class DatabaseReader:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(query, params)
                 rows = cur.fetchmany(max_rows)
-                results = [dict(row) for row in rows]
+                results = []
+                for row in rows:
+                    item = {}
+                    for k, v in dict(row).items():
+                        if hasattr(v, "isoformat"):
+                            item[k] = v.isoformat()
+                        elif hasattr(v, "__str__") and not isinstance(v, (int, float, bool, list, dict, type(None))):
+                            item[k] = str(v)
+                        else:
+                            item[k] = v
+                    results.append(item)
 
             self.audit.record(
                 tool_name="DatabaseReader",

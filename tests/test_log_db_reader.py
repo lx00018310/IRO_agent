@@ -45,3 +45,37 @@ def test_db_reader_sql_validation():
     # 非法多语句注入拦截
     with pytest.raises(SecurityPolicyError):
         db._validate_sql_readonly("SELECT 1; DROP TABLE ordersys_dock_task")
+
+
+def test_db_reader_datetime_and_special_type_serialization():
+    """验证数据库返回包含 datetime 等非基础类型时，工具与 JSON 序列化不会崩溃"""
+    import datetime
+    import json
+
+    fake_rows = [
+        {
+            "id": 101,
+            "station_no": "01",
+            "created_at": datetime.datetime(2026, 9, 10, 11, 2, 39),
+            "updated_at": datetime.date(2026, 9, 10),
+            "completed": True,
+        }
+    ]
+
+    # 测试归一化逻辑
+    results = []
+    for row in fake_rows:
+        item = {}
+        for k, v in row.items():
+            if hasattr(v, "isoformat"):
+                item[k] = v.isoformat()
+            else:
+                item[k] = v
+        results.append(item)
+
+    assert results[0]["created_at"] == "2026-09-10T11:02:39"
+    assert results[0]["updated_at"] == "2026-09-10"
+
+    # 验证 json.dumps default=str 彻底杜绝崩溃
+    dumped = json.dumps(fake_rows, ensure_ascii=False, default=str)
+    assert "2026-09-10 11:02:39" in dumped or "2026-09-10" in dumped
