@@ -92,3 +92,11 @@ class DatabaseReader:
                     conn.close()
                 except Exception:
                     pass
+
+    def test_connection(self) -> bool:
+        """测试数据库连接连通性（安全只读探测）"""
+        try:
+            self.execute_query("SELECT 1 AS alive", max_rows=1)
+            return True
+        except Exception:
+            return False

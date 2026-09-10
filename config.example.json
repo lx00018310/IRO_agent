@@ -21,13 +21,24 @@
     "model": "glm-5.3-flash",
     "timeout": 60
   },
-  "wechat": {
-    "enabled": false,
-    "listen_host": "0.0.0.0",
-    "listen_port": 8080,
-    "webhook_url": "CHANGE_ME_HERE",
-    "token": "CHANGE_ME_HERE",
-    "aes_key": "CHANGE_ME_HERE"
+  "gateway": {
+    "type": "feishu",
+    "listen_host": "127.0.0.1",
+    "listen_port": 8080
+  },
+  "feishu": {
+    "enabled": true,
+    "app_id": "YOUR_FEISHU_APP_ID",
+    "app_secret": "YOUR_FEISHU_APP_SECRET",
+    "receive_group_at": true,
+    "receive_private": true
+  },
+  "project_mapping": {
+    "feishu": {
+      "oc_example_chat_id": {
+        "project": "TASK-013"
+      }
+    }
   },
   "storage": {
     "audit_db_path": "iro_agent_audit.db",

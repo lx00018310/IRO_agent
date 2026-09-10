@@ -42,9 +42,12 @@ IRO_agent/
 │   │   └── interpreter.py        # 业务语言转译报告生成器
 │   ├── llm/                      # 大模型层
 │   │   └── glm_client.py         # GLM-5.3-Flash API 封装、Tool Calling 与离线研判兜底
-│   └── gateway/                  # 外部接入网关
-│       └── wechat.py             # 微信网关服务 (@群聊交互、会话保持、安全脱敏回送)
-└── tests/                        # 完整测试套件 (20 项单元与端到端场景测试全部通过)
+│   └── gateway/                  # 外部接入网关 (飞书企业机器人长连接 + 开发适配器)
+│       ├── base.py               # 网关抽象适配器与归一化消息结构
+│       ├── feishu.py             # 飞书应用机器人生产网关 (WebSocket 长连接、群聊@清洗、图片受控转存)
+│       ├── dedup.py              # 事件与消息 SQLite 幂等防重放存储
+│       └── http_adapter.py       # 本地开发与测试 HTTP 适配器
+└── tests/                        # 完整测试套件 (39 项单元与端到端场景测试全部通过)
 ```
 
 ---
@@ -62,19 +65,42 @@ uv pip install -e .
 
 ### 2. 配置文件说明 (单一配置文件)
 
-复制 `config.example.json` 为 `config.json`：
+复制 `config.example.json` 为 `config.json`，配置飞书凭据与工程路径：
 
-> **工控机部署须知**：未来迁移至远程工控机时，**无需改动任何代码**，只需修改 `config.json` 中的各路径、日志地址与数据库连接配置即可。
-
-### 3. 环境自检 (`iro-agent doctor`)
-
-在工控机或本机部署后，执行环境诊断自检：
-
-```bash
-iro-agent doctor
+```json
+{
+  "project_name": "TASK-013",
+  "gateway": {
+    "type": "feishu"
+  },
+  "feishu": {
+    "enabled": true,
+    "app_id": "cli_xxxxxxxxxxxx",
+    "app_secret": "xxxxxxxxxxxxxxxxxxxxxxxx",
+    "receive_group_at": true,
+    "receive_private": true
+  }
+}
 ```
 
-将依次检查 Python 版本、源码路径、WRelease 发布包、日志目录、Git 仓库只读状态、SQLite 数据库以及 GLM 大模型就绪状态。
+> **飞书自建应用配置指引**：
+> 1. 前往飞书开放平台创建企业“自建应用”，在“添加应用能力”中开启 **机器人** 能力。
+> 2. 开通权限：在“开发配置 -> 权限管理”中开通消息读取、接收群聊与私聊消息、获取图片资源等权限。
+> 3. 事件订阅：在“事件订阅”中订阅接收消息事件 `im.message.receive_v1`，模式选择 **WebSocket 长连接**（无需任何公网 IP 或 HTTP 域名解析）。
+> 4. 发布应用版本并在飞书内安装生效，将机器人拉入目标工控机运维群。
+> 5. 凭证安全：支持通过环境变量 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` 注入，系统对凭据实施严格掩码与回送脱敏。
+
+### 3. 环境与网关自检 (`iro-agent gateway doctor`)
+
+在工控机或本机部署后，执行一键健康体检：
+
+```bash
+# 全局工控机系统体检
+iro-agent doctor
+
+# 飞书网关链路专项体检
+iro-agent gateway doctor
+```
 
 ### 4. 交互式命令行诊断 (`iro-agent chat`)
 
@@ -87,13 +113,16 @@ iro-agent chat
 - *"今天这个升级导致了问题吗？"*
 - *"到底哪个模块坏了？现场自动装车还能不能继续跑？"*
 
-### 5. 启动微信网关 (`iro-agent gateway start`)
+### 5. 启动飞书机器人网关 (`iro-agent gateway start`)
 
 ```bash
-# 启动后台网关监听
+# 启动飞书 WebSocket 长连接网关 (生产模式)
 iro-agent gateway start
 
-# 查看状态
+# 启动本地开发测试 HTTP 适配器
+iro-agent gateway start --type http
+
+# 查看网关状态
 iro-agent gateway status
 ```
 

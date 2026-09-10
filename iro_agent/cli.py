@@ -14,7 +14,8 @@ from iro_agent.readers.log_reader import LogReader
 from iro_agent.readers.db_reader import DatabaseReader
 from iro_agent.memory.incident_store import IncidentStore
 from iro_agent.llm.glm_client import GlmClient
-from iro_agent.gateway.wechat import WeChatGatewayServer
+from iro_agent.gateway.feishu import FeishuGateway
+from iro_agent.gateway.http_adapter import HttpGatewayAdapter
 
 import re
 
@@ -190,11 +191,11 @@ def cmd_config(args):
     cfg_data = copy.deepcopy(config.model_dump())
 
     def _mask_sensitive(d: dict):
-        sensitive_keys = {"password", "api_key", "token", "aes_key", "secret", "private_key"}
+        sensitive_keys = {"password", "api_key", "token", "aes_key", "secret", "private_key", "app_secret"}
         for k, v in d.items():
             if isinstance(v, dict):
                 _mask_sensitive(v)
-            elif isinstance(v, str) and k.lower() in sensitive_keys and v:
+            elif isinstance(v, str) and (k.lower() in sensitive_keys or "secret" in k.lower() or "key" in k.lower()) and v:
                 d[k] = "********"
 
     _mask_sensitive(cfg_data)
@@ -261,30 +262,116 @@ def cmd_chat(args):
             print(f"\n[诊断异常] {e}")
 
 
+def run_gateway_doctor(config: IROConfig):
+    """网关环境与链路专项健康检查 (严格屏蔽 Secret)"""
+    print("==================================================")
+    print("  IRO_agent 网关健康体检 (Gateway Doctor)         ")
+    print("==================================================")
+
+    checks = []
+
+    # 1. 飞书 App ID
+    app_id_ok = bool(config.feishu.app_id and config.feishu.app_id != "YOUR_FEISHU_APP_ID")
+    checks.append(("FEISHU_APP_ID configured", f"已配置 ({config.feishu.app_id[:6]}***)" if app_id_ok else "未配置或为默认占位符", app_id_ok))
+
+    # 2. 飞书 App Secret (严格掩码)
+    app_secret_ok = bool(config.feishu.app_secret and config.feishu.app_secret != "YOUR_FEISHU_APP_SECRET")
+    checks.append(("FEISHU_APP_SECRET configured", "已配置 (********)" if app_secret_ok else "未配置或为默认占位符", app_secret_ok))
+
+    # 3. GLM API
+    glm_ok = bool(config.glm.api_key and config.glm.api_key != "YOUR_GLM_API_KEY")
+    checks.append(("GLM API reachable", f"已就绪 (模型: {config.glm.model})" if glm_ok else "未配置有效的 API Key", glm_ok))
+
+    # 4. Project
+    proj_ok = bool(config.project_name and os.path.exists(config.project_root))
+    checks.append((f"{config.project_name} project configured", f"路径存在 ({config.project_root})" if proj_ok else f"路径不可达 ({config.project_root})", proj_ok))
+
+    # 5. Version Provider
+    from iro_agent.readers.version_provider import VersionReaderResolver
+    audit = AuditLogger()
+    v_reader, active_provider = VersionReaderResolver.resolve(config=config, audit_logger=audit)
+    v_ok = active_provider != "None"
+    checks.append((f"Version provider: {active_provider}", "激活成功" if v_ok else "无可用版本源", v_ok))
+
+    # 6. LogReader path
+    log_paths_ok = any(os.path.exists(d) for d in config.log_dirs)
+    checks.append(("LogReader path readable", "日志目录可读" if log_paths_ok else "未发现有效日志目录", log_paths_ok))
+
+    # 7. Database read-only connection
+    db_reader = DatabaseReader(db_config=config.database, audit_logger=audit)
+    db_ok = db_reader.test_connection()
+    checks.append(("Database read-only connection", "连接成功 (只读)" if db_ok else "不可达或未启动", db_ok))
+
+    # 8. Incident database writable
+    mem_ok = os.path.exists(config.storage.memory_db_path)
+    checks.append(("Incident database writable", "SQLite 可读写" if mem_ok else "未初始化", mem_ok))
+
+    # 9. Feishu client initialized
+    feishu_client_ok = False
+    if app_id_ok and app_secret_ok:
+        try:
+            gw = FeishuGateway(config=config)
+            feishu_client_ok = gw.client is not None
+        except Exception:
+            feishu_client_ok = False
+    checks.append(("Feishu client initialized", "OpenAPI 客户端就绪" if feishu_client_ok else "未就绪 (凭据缺失或异常)", feishu_client_ok))
+
+    for name, detail, passed in checks:
+        status_icon = "[OK]" if passed else "[FAIL]"
+        print(f"{status_icon:8} {name:32}: {detail}")
+
+    print("==================================================")
+    return all(c[2] for c in checks)
+
+
 def cmd_gateway(args):
-    """微信网关启停与状态查看"""
+    """网关服务控制与状态体检"""
     config = get_config()
     action = args.action
 
+    if action == "doctor":
+        run_gateway_doctor(config)
+        return
+
+    gw_type = getattr(args, "type", None) or config.gateway.type or "feishu"
+
     if action == "start":
         if not config.glm.api_key or config.glm.api_key == "YOUR_GLM_API_KEY":
-            print("[错误] 未配置有效的 GLM API Key，无法启动微信网关服务。请先编辑 config.json 填入 api_key。")
+            print("[错误] 未配置有效的 GLM API Key，无法启动网关服务。请先编辑 config.json 填入 api_key。")
             return
+
         engine = init_agent_engine(config)
-        server = WeChatGatewayServer(
-            host=config.wechat.listen_host,
-            port=config.wechat.listen_port,
-            glm_client=engine,
-        )
-        server.start(block=True)
+
+        if gw_type == "feishu":
+            if not config.feishu.app_id or not config.feishu.app_secret:
+                print("[错误] 未配置 FEISHU_APP_ID 或 FEISHU_APP_SECRET，无法启动飞书长连接网关。")
+                print("请在 config.json 中配置 feishu.app_id 和 feishu.app_secret，或设置环境变量。")
+                return
+            gateway = FeishuGateway(config=config, glm_client=engine)
+            gateway.start(block=True)
+        elif gw_type == "http":
+            adapter = HttpGatewayAdapter(
+                host=config.gateway.listen_host,
+                port=config.gateway.listen_port,
+                glm_client=engine,
+            )
+            adapter.start(block=True)
+        else:
+            print(f"[错误] 未知的网关类型: {gw_type}")
+
     elif action == "status":
-        import urllib.request
-        url = f"http://127.0.0.1:{config.wechat.listen_port}"
-        try:
-            with urllib.request.urlopen(url, timeout=3) as resp:
-                print(f"[Gateway 状态] 运行中 (HTTP {resp.status})")
-        except Exception as e:
-            print(f"[Gateway 状态] 未运行或不可达 ({e})")
+        if gw_type == "feishu":
+            gw = FeishuGateway(config=config)
+            info = gw.health()
+            print(f"[Feishu Gateway 状态] 配置就绪: {info['app_id_configured']}, 长连接就绪: {info['websocket_client_ready']}")
+        elif gw_type == "http":
+            import urllib.request
+            url = f"http://127.0.0.1:{config.gateway.listen_port}"
+            try:
+                with urllib.request.urlopen(url, timeout=3) as resp:
+                    print(f"[Http Gateway 状态] 运行中 (HTTP {resp.status})")
+            except Exception as e:
+                print(f"[Http Gateway 状态] 未运行或不可达 ({e})")
 
 
 def main():
@@ -303,8 +390,9 @@ def main():
     subparsers.add_parser("doctor", help="执行工控机与系统环境体检")
 
     # gateway
-    gateway_parser = subparsers.add_parser("gateway", help="微信网关服务控制")
-    gateway_parser.add_argument("action", choices=["start", "status"], help="操作指令")
+    gateway_parser = subparsers.add_parser("gateway", help="网关服务控制 (飞书机器人/开发测试适配器)")
+    gateway_parser.add_argument("action", choices=["start", "status", "doctor"], help="操作指令")
+    gateway_parser.add_argument("--type", choices=["feishu", "http"], default=None, help="指定网关类型 (默认使用配置项)")
 
     args = parser.parse_args()
 

@@ -4,7 +4,7 @@ import pytest
 from iro_agent.config import get_config, IROConfig
 from iro_agent.cli import init_agent_engine
 from iro_agent.memory.incident_store import IncidentStore
-from iro_agent.gateway.wechat import WeChatGatewayServer
+from iro_agent.gateway.http_adapter import HttpGatewayAdapter
 
 
 def test_missing_api_key_raises():
@@ -81,8 +81,8 @@ def test_scenario_c_historical_similar():
     assert "Network" in stats["domain_breakdown"]
 
 
-def test_scenario_wechat_gateway_with_glm():
-    """验证微信网关调用 GLM 回送结果"""
+def test_scenario_http_gateway_adapter_with_glm():
+    """验证开发测试 HTTP 网关适配器调用 GLM 回送结果"""
     config = get_config()
     config.glm.api_key = "test_valid_api_key_12345"
     engine = init_agent_engine(config)
@@ -99,7 +99,7 @@ def test_scenario_wechat_gateway_with_glm():
     }
 
     with patch("requests.post", return_value=mock_resp):
-        server = WeChatGatewayServer(host="127.0.0.1", port=18089, glm_client=engine)
+        server = HttpGatewayAdapter(host="127.0.0.1", port=18089, glm_client=engine)
         server.start(block=False)
 
         import urllib.request
@@ -107,7 +107,7 @@ def test_scenario_wechat_gateway_with_glm():
             req_data = json.dumps({
                 "from_user": "user_01",
                 "session_id": "sess_01",
-                "content": "@IRO_agent 检查现场状态",
+                "content": "检查现场状态",
             }).encode("utf-8")
 
             req = urllib.request.Request(

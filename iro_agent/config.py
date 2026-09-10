@@ -21,13 +21,22 @@ class GlmConfig(BaseModel):
     timeout: int = 60
 
 
-class WeChatConfig(BaseModel):
-    enabled: bool = False
-    listen_host: str = "0.0.0.0"
+class GatewayConfig(BaseModel):
+    type: str = "feishu"  # "feishu" | "http"
+    listen_host: str = "127.0.0.1"
     listen_port: int = 8080
-    webhook_url: str = ""
-    token: str = ""
-    aes_key: str = ""
+
+
+class FeishuConfig(BaseModel):
+    enabled: bool = True
+    app_id: str = ""
+    app_secret: str = ""
+    receive_group_at: bool = True
+    receive_private: bool = True
+
+
+class ProjectMappingConfig(BaseModel):
+    feishu: dict[str, dict[str, str]] = Field(default_factory=dict)
 
 
 class StorageConfig(BaseModel):
@@ -48,7 +57,9 @@ class IROConfig(BaseModel):
     allowed_paths: List[str] = Field(default_factory=list)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     glm: GlmConfig = Field(default_factory=GlmConfig)
-    wechat: WeChatConfig = Field(default_factory=WeChatConfig)
+    gateway: GatewayConfig = Field(default_factory=GatewayConfig)
+    feishu: FeishuConfig = Field(default_factory=FeishuConfig)
+    project_mapping: ProjectMappingConfig = Field(default_factory=ProjectMappingConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
 
     def get_effective_allowed_paths(self) -> List[str]:
@@ -103,10 +114,18 @@ def load_config(config_path: Optional[str] = None) -> IROConfig:
         _CONFIG_INSTANCE.database.host = os.environ["IRO_DB_HOST"]
     if os.environ.get("IRO_DB_USER"):
         _CONFIG_INSTANCE.database.user = os.environ["IRO_DB_USER"]
-    if os.environ.get("IRO_WECHAT_TOKEN"):
-        _CONFIG_INSTANCE.wechat.token = os.environ["IRO_WECHAT_TOKEN"]
-    if os.environ.get("IRO_WECHAT_AES_KEY"):
-        _CONFIG_INSTANCE.wechat.aes_key = os.environ["IRO_WECHAT_AES_KEY"]
+
+    # 飞书凭据与网关环境变量支持
+    feishu_app_id = os.environ.get("FEISHU_APP_ID") or os.environ.get("IRO_FEISHU_APP_ID")
+    if feishu_app_id:
+        _CONFIG_INSTANCE.feishu.app_id = feishu_app_id
+
+    feishu_app_secret = os.environ.get("FEISHU_APP_SECRET") or os.environ.get("IRO_FEISHU_APP_SECRET")
+    if feishu_app_secret:
+        _CONFIG_INSTANCE.feishu.app_secret = feishu_app_secret
+
+    if os.environ.get("IRO_GATEWAY_TYPE"):
+        _CONFIG_INSTANCE.gateway.type = os.environ["IRO_GATEWAY_TYPE"]
 
     return _CONFIG_INSTANCE
 
