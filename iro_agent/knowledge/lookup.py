@@ -2,25 +2,27 @@ import re
 from typing import Dict, Any, List, Optional
 from iro_agent.knowledge.store import ProjectKnowledgeStore
 from iro_agent.knowledge.models import BusinessConcept, TableKnowledge, SourceOfTruthRule
+from iro_agent.knowledge.code_graph import CodeRelationshipGraph
 
 
 class ProjectLookupEngine:
-    """项目认知检索与业务对齐引擎 (Project Lookup Engine)"""
+    """项目认知检索与业务架构对齐引擎 (业务概念 + 事实源 + 代码调用拓扑)"""
 
     def __init__(self, store: Optional[ProjectKnowledgeStore] = None):
         self.store = store or ProjectKnowledgeStore()
 
     def lookup(self, query: str) -> Dict[str, Any]:
-        """依据自然语言业务提问，提取权威事实源与对应表结构指引，严控在 5~15 条高价值事实"""
+        """依据自然语言业务提问，提取权威事实源、避坑提示及代码调用关系链路"""
         blueprint = self.store.load_blueprint()
         if not blueprint:
             return {
                 "status": "NOT_BOOTSTRAPPED",
-                "message": "尚未建立当前项目的持久化业务蓝图，请先运行 iro init 初始化。",
+                "message": "尚未建立当前项目的持久化业务蓝图，请先运行 iro-agent init 初始化。",
                 "concepts": [],
                 "rules": [],
                 "tables": [],
                 "warnings": [],
+                "code_relationships": {},
             }
 
         q_raw = query.strip()
@@ -37,20 +39,16 @@ class ProjectLookupEngine:
             for i in range(len(q_raw) - 1):
                 bigrams.add(q_raw[i:i+2].lower())
 
-        # 1. 匹配业务概念 (Business Concepts) - 支持精确匹配与消歧打分
+        # 1. 匹配业务概念 (Business Concepts)
         scored_concepts = []
         for c in blueprint.business_concepts:
             all_names = [c.name.lower()] + [a.lower() for a in c.aliases]
             score = 0
-            # 完整别名或全名在提问中直接出现 -> 最高分
             for name in all_names:
                 if name in q_raw.lower():
                     score = max(score, 100 + len(name))
-            # 若无完整匹配，检查核心关键词是否出现
             if score == 0:
-                # 概念的核心特征词需满足至少 3 字或多个 bigram 命中
                 matched_bg = [bg for bg in bigrams if bg in c.name.lower() or any(bg in a.lower() for a in c.aliases)]
-                # 排除像"调度"这类系统级超宽泛词导致的单点误触发
                 meaningful_bg = [bg for bg in matched_bg if bg not in ("系统", "查询", "信息", "调度")]
                 if meaningful_bg:
                     score = len(meaningful_bg) * 10
@@ -58,10 +56,8 @@ class ProjectLookupEngine:
             if score > 0:
                 scored_concepts.append((score, c))
 
-        # 按匹配度从高到低排序
         scored_concepts.sort(key=lambda x: x[0], reverse=True)
 
-        # 收集最高置信度概念明确禁用的表（例如当前托盘禁用 ordersys_dispatch_callback_receipt）
         forbidden_tables = set()
         if scored_concepts:
             top_concept = scored_concepts[0][1]
@@ -72,7 +68,6 @@ class ProjectLookupEngine:
         for score, c in scored_concepts:
             cs = c.canonical_source
             c_tbl = cs.get("table", "").lower() if isinstance(cs, dict) else ""
-            # 若该概念依赖的表被最高优先级概念明确禁用，且当前概念不是绝对显式命中（score < 100），则果断消歧过滤
             if c_tbl and c_tbl in forbidden_tables and score < 100:
                 continue
 
@@ -90,7 +85,6 @@ class ProjectLookupEngine:
                     if warn_msg not in warnings:
                         warnings.append(warn_msg)
 
-        # 收集概念命中的权威表名
         concept_tables = set()
         for c in matched_concept_objs:
             if isinstance(c.canonical_source, dict) and "table" in c.canonical_source:
@@ -100,9 +94,7 @@ class ProjectLookupEngine:
         for r in blueprint.source_of_truth_rules:
             fact_lower = r.fact.lower()
             canon_lower = r.canonical_source.lower()
-            # 条件A: 事实描述包含搜索子词或直接包含提问关键词
             text_hit = any(term in fact_lower for term in bigrams if len(term) >= 2) or fact_lower in q_raw.lower()
-            # 条件B: 规则涉及已命中概念的权威表
             table_hit = any(tbl in canon_lower for tbl in concept_tables)
 
             if text_hit or table_hit:
@@ -119,7 +111,6 @@ class ProjectLookupEngine:
                         warnings.append(w)
 
         # 3. 匹配核心业务表 (Database Tables)
-        # 优先加入 matched_concepts 和 matched_rules 中涉及的表
         involved_table_names = set()
         for c in matched_concepts:
             cs = c.get("canonical_source")
@@ -149,18 +140,34 @@ class ProjectLookupEngine:
                     "time_fields": t.time_fields,
                     "important_fields": t.important_fields,
                     "not_for": t.not_for,
+                    "confidence": t.confidence,
                 })
-                if t.not_for:
-                    for nf in t.not_for:
-                        w = f"【表适用性】表 '{t.table_name}' 不适用于: {nf}"
-                        if w not in warnings:
-                            warnings.append(w)
+
+        # 4. 关联代码调用图 (Code Relationship Graph)
+        code_relationships: Dict[str, Any] = {}
+        graph_data = blueprint.metadata.get("code_graph")
+        if graph_data:
+            graph = CodeRelationshipGraph.from_dict(graph_data)
+            # 查找命中表的代码读写情况
+            for t_item in matched_tables[:3]:
+                tbl_name = t_item["table_name"]
+                usage = graph.find_table_usage(tbl_name)
+                if usage["read_by"] or usage["written_by"] or usage["mapped_by"]:
+                    code_relationships[tbl_name] = usage
+
+            # 若提问包含接口路由特征 (如 /ordersys 或 /api)，执行 API 链路追溯
+            api_candidates = re.findall(r"(/[a-zA-Z0-9_\-]+(?:/[a-zA-Z0-9_\-]+)*)", q_raw)
+            for api_cand in api_candidates:
+                traces = graph.trace_api_to_table(api_cand)
+                if traces:
+                    code_relationships[f"api_trace:{api_cand}"] = traces
 
         return {
             "status": "SUCCESS",
-            "project_id": blueprint.project.project_id,
+            "query": query,
             "concepts": matched_concepts[:5],
             "rules": matched_rules[:5],
             "tables": matched_tables[:5],
-            "warnings": warnings[:5],
+            "warnings": warnings,
+            "code_relationships": code_relationships,
         }

@@ -56,9 +56,13 @@ class ProjectKnowledgeBootstrapper:
         print("\n[Stage 3/5] 定向扫描数据模型 (ORM) 与关键实体...")
         code_scanner = TargetedCodeScanner(self.project_root)
         code_res = code_scanner.scan()
-        print(f"  ├─ 扫描文件数: {code_res.scanned_files_count}")
-        print(f"  ├─ 识别 ORM 模型类: {code_res.detected_models_count} 个")
-        print(f"  └─ 识别状态枚举类: {len(code_res.enums)} 个")
+        print(f"  ├─ 扫描组件数: {code_res.scanned_files_count}")
+        print(f"  ├─ 识别模型/实体类: {code_res.detected_models_count} 个")
+        print(f"  ├─ 识别状态枚举类: {len(code_res.enums)} 个")
+        if code_res.code_graph:
+            g_nodes = len(code_res.code_graph.get("entities", []))
+            g_edges = len(code_res.code_graph.get("edges", []))
+            print(f"  └─ 构建代码拓扑图: 实体节点 {g_nodes} 个, 关系边 {g_edges} 条")
 
         # 4. 结构化知识合成
         print("\n[Stage 4/5] 提纯业务概念与核心事实源规则 (Source of Truth)...")

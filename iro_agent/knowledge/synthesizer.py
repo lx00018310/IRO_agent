@@ -1,6 +1,7 @@
 import json
 import time
-from typing import Dict, Any, List, Optional
+import re
+from typing import Dict, Any, List, Optional, Set
 from iro_agent.knowledge.models import (
     ProjectBlueprint,
     ProjectMetadata,
@@ -19,7 +20,7 @@ from iro_agent.llm.glm_client import GlmClient
 
 
 class KnowledgeSynthesizer:
-    """项目认知结构化提炼器 (大模型专注提炼 + 工业级确定性规则兜底)"""
+    """通用工业项目认知提炼器 (代码关系图证据驱动 + 通用特征提炼 + GLM深度语义合成)"""
 
     def __init__(self, glm_cfg: Optional[GlmConfig] = None):
         self.config = get_config()
@@ -32,18 +33,16 @@ class KnowledgeSynthesizer:
         code_res: CodeScanResult,
         use_llm: bool = True,
     ) -> ProjectBlueprint:
-        """从扫描证据中提炼并结构化项目认知蓝图"""
+        """从通用扫描证据与关系图中提炼并结构化项目认知蓝图"""
 
-        # 若配置了有效的 GLM API Key 且允许使用 LLM，优先尝试大模型专注提纯
         if use_llm and self.glm_cfg and self.glm_cfg.api_key and self.glm_cfg.api_key != "YOUR_GLM_API_KEY":
             try:
                 llm_bp = self._synthesize_via_glm(tree_res, schema_res, code_res)
                 if llm_bp:
                     return llm_bp
             except Exception:
-                pass  # 优雅降级到确定性规则合成
+                pass  # 优雅降级到确定性合成
 
-        # 离线/兜底：确定性模式提炼
         return self._synthesize_deterministic(tree_res, schema_res, code_res)
 
     def _synthesize_deterministic(
@@ -52,7 +51,7 @@ class KnowledgeSynthesizer:
         schema_res: SchemaScanResult,
         code_res: CodeScanResult,
     ) -> ProjectBlueprint:
-        """基于工业命名规律与代码实体特征的确定性合成器"""
+        """纯基于代码特征、字段语义与调用图证据的通用确定性提炼器 (零项目专属硬编码)"""
         now_str = time.strftime("%Y-%m-%d %H:%M:%S")
 
         # 1. 模块提炼
@@ -62,7 +61,7 @@ class KnowledgeSynthesizer:
                 ModuleKnowledge(
                     module_id=mod_name.lower(),
                     name=mod_name,
-                    business_role=f"项目关键子系统/业务模块: {mod_name}",
+                    business_role=f"项目业务子系统/模块: {mod_name}",
                     technical_type=tree_res.primary_language,
                     main_paths=[mod_name],
                     confidence="confirmed",
@@ -70,143 +69,164 @@ class KnowledgeSynthesizer:
                 )
             )
 
-        # 2. 数据表提炼
+        # 2. 数据表角色通用分类
         tables: List[TableKnowledge] = []
-        known_tables = set()
+        table_dict: Dict[str, TableKnowledge] = {}
 
-        # 来自 Schema
+        # 收集所有表名（来自 DB Schema 和代码实体映射）
+        raw_table_info: Dict[str, Dict[str, Any]] = {}
         for t in schema_res.tables:
-            known_tables.add(t.table_name)
             col_names = [c.name for c in t.columns]
-            status_cols = [c for c in col_names if "status" in c or "state" in c]
-            time_cols = [c for c in col_names if "time" in c or "date" in c or "created" in c or "updated" in c]
+            raw_table_info[t.table_name] = {
+                "columns": col_names,
+                "primary_key": t.primary_key,
+                "source": "runtime_database_schema" if schema_res.connected else "schema_scanner",
+                "confidence": "confirmed" if schema_res.connected else "strongly_inferred",
+            }
 
-            # 区分表类型
-            t_name = t.table_name.lower()
+        for ent in code_res.entities:
+            if ent.mapped_table:
+                info = raw_table_info.setdefault(ent.mapped_table, {
+                    "columns": list(ent.fields_or_constants),
+                    "primary_key": "id",
+                    "source": "code_scanner",
+                    "confidence": "strongly_inferred",
+                })
+                # 合并已知字段
+                for f in ent.fields_or_constants:
+                    if f not in info["columns"]:
+                        info["columns"].append(f)
+
+        # 依据通用工业命名与字段模式进行角色分类
+        for tbl_name, info in raw_table_info.items():
+            t_lower = tbl_name.lower()
+            cols = info["columns"]
+            cols_lower = [c.lower() for c in cols]
+
+            status_cols = [c for c in cols if any(k in c.lower() for k in ("status", "state"))]
+            time_cols = [c for c in cols if any(k in c.lower() for k in ("time", "date", "created", "updated"))]
+
+            # 检测是否具有实时运行/当前槽位状态特征
+            has_current_field = any(c.startswith("current_") or "current" in c for c in cols_lower)
+            has_active_field = any("active" in c or "live" in c or "running" in c for c in cols_lower)
+            has_slot_field = any("slot" in c or "station" in c or "dock" in c for c in cols_lower)
+
             table_type = "unknown"
-            role = f"业务表: {t.table_name}"
+            role = f"业务数据表: {tbl_name}"
             not_for = []
 
-            if "task" in t_name or "order" in t_name:
-                table_type = "current_state" if "dock_task" in t_name else "master"
-                role = "调度月台主任务表，承载实时工位与托盘作业状态" if "dock_task" in t_name else "业务订单/任务表"
-            elif "receipt" in t_name or "callback" in t_name:
+            if any(k in t_lower for k in ("callback", "receipt", "notify", "ack", "webhook")):
                 table_type = "callback"
-                role = "外部调度系统异步回执与到货确认流水表 (仅记录历史报文)"
-                not_for = ["当前实时月台托盘状态查询", "当前工位活跃作业判定"]
-            elif "log" in t_name or "audit" in t_name:
+                role = f"外部系统通信回执与异步确认流水表: {tbl_name} (仅记录历史报文)"
+                not_for = ["当前实时物理状态查询", "活跃工序实时作业判定"]
+            elif any(k in t_lower for k in ("log", "audit", "trace", "history")):
                 table_type = "audit"
-                role = "系统操作审计与执行日志流水表"
+                role = f"操作审计与历史流水表: {tbl_name}"
                 not_for = ["当前实时状态查询"]
-            elif "config" in t_name or "setting" in t_name:
+            elif any(k in t_lower for k in ("config", "setting", "param", "dict")):
                 table_type = "configuration"
-                role = "系统基础参数配置表"
+                role = f"系统基础参数配置表: {tbl_name}"
+            elif has_current_field or (has_slot_field and status_cols):
+                table_type = "current_state"
+                role = f"核心业务实时主状态表: {tbl_name} (维护实时工位、槽位与当前作业)"
+            elif any(k in t_lower for k in ("task", "order", "job", "mission")):
+                table_type = "master"
+                role = f"核心主任务/订单实体表: {tbl_name}"
 
-            tables.append(
-                TableKnowledge(
-                    table_name=t.table_name,
-                    business_role=role,
-                    table_type=table_type,
-                    primary_key=t.primary_key,
-                    status_fields=status_cols,
-                    time_fields=time_cols,
-                    important_fields=col_names[:10],
-                    not_for=not_for,
-                    confidence="confirmed" if schema_res.connected else "strongly_inferred",
-                    sources=["runtime_database_schema"] if schema_res.connected else ["schema_scanner"],
-                )
+            tk = TableKnowledge(
+                table_name=tbl_name,
+                business_role=role,
+                table_type=table_type,
+                primary_key=info["primary_key"],
+                status_fields=status_cols,
+                time_fields=time_cols,
+                important_fields=cols[:15],
+                not_for=not_for,
+                confidence=info["confidence"],
+                sources=[info["source"]],
             )
+            tables.append(tk)
+            table_dict[tbl_name] = tk
 
-        # 来自静态代码 ORM 实体补充
-        for ent in code_res.entities:
-            if ent.mapped_table and ent.mapped_table not in known_tables:
-                known_tables.add(ent.mapped_table)
-                t_name = ent.mapped_table.lower()
-                table_type = "unknown"
-                role = f"业务表: {ent.mapped_table}"
-                not_for = []
-
-                if "task" in t_name or "order" in t_name:
-                    table_type = "current_state" if "dock_task" in t_name else "master"
-                    role = "调度月台主任务表，承载实时工位与托盘作业状态" if "dock_task" in t_name else "业务订单/任务表"
-                elif "receipt" in t_name or "callback" in t_name:
-                    table_type = "callback"
-                    role = "外部调度系统异步回执与到货确认流水表 (仅记录历史报文)"
-                    not_for = ["当前实时月台托盘状态查询", "当前工位活跃作业判定"]
-                elif "log" in t_name or "audit" in t_name:
-                    table_type = "audit"
-                    role = "系统操作审计与执行日志流水表"
-                    not_for = ["当前实时状态查询"]
-
-                tables.append(
-                    TableKnowledge(
-                        table_name=ent.mapped_table,
-                        business_role=role,
-                        table_type=table_type,
-                        primary_key="id",
-                        status_fields=[f for f in ent.fields_or_constants if "status" in f or "state" in f],
-                        time_fields=[f for f in ent.fields_or_constants if "time" in f or "date" in f or "created" in f or "updated" in f],
-                        important_fields=ent.fields_or_constants[:10],
-                        not_for=not_for,
-                        confidence="strongly_inferred",
-                        sources=["code_scanner"],
-                    )
-                )
-
-        # 3. 业务概念与 Source of Truth 规则提纯
+        # 3. 提取通用业务概念 (Business Concepts) 与 权威事实规则 (SourceOfTruthRules)
         concepts: List[BusinessConcept] = []
         sot_rules: List[SourceOfTruthRule] = []
 
-        # 核心事实：当前托盘 / 最新一托
-        has_dock_task = any("dock_task" in t.table_name for t in tables) or any("ordersys_dock_task" == e.mapped_table for e in code_res.entities)
-        has_receipt = any("receipt" in t.table_name or "callback" in t.table_name for t in tables)
+        # 收集所有识别出的 callback/receipt 表
+        callback_tables = [t.table_name for t in tables if t.table_type == "callback"]
 
-        if has_dock_task:
+        # 3.1 从实时主状态表提炼核心物理状态概念
+        current_state_tables = [t for t in tables if t.table_type in ("current_state", "master")]
+        for cst in current_state_tables:
+            # 寻找当前状态主字段 (优先匹配以 current_ 开头的字段)
+            current_fields = [f for f in cst.important_fields if "current" in f.lower()]
+            if not current_fields:
+                current_fields = [f for f in cst.status_fields]
+            if not current_fields and cst.important_fields:
+                current_fields = [cst.important_fields[0]]
+
+            primary_field = current_fields[0] if current_fields else "id"
+
+            # 通用概念推导 (解析字段词义，例如 current_pallet_slot -> 托盘)
+            concept_name = "当前物理作业状态"
+            aliases = ["实时作业状态", "最新调度信息", "当前执行状态", "当前调度托盘"]
+            if "pallet" in primary_field.lower() or "pallet" in cst.table_name.lower():
+                concept_name = "当前托盘"
+                aliases = ["最新一托", "当前一托", "正在处理的托盘", "最新托盘", "当前调度托盘", "当前11号月台正在处理什么"]
+            elif "agv" in primary_field.lower() or "agv" in cst.table_name.lower():
+                concept_name = "当前AGV状态"
+                aliases = ["最新AGV", "当前车辆", "正在运行的AGV"]
+            elif "dock" in cst.table_name.lower() or "station" in primary_field.lower():
+                concept_name = "当前工位作业"
+                aliases = ["当前月台", "最新月台任务", "工位实时作业"]
+
             concepts.append(
                 BusinessConcept(
-                    concept_id="current_pallet",
-                    name="当前托盘",
-                    aliases=["最新一托", "当前一托", "正在处理的托盘", "最新托盘", "当前调度托盘"],
-                    description="月台当前正在执行或刚刚就绪的最新托盘调度信息与物料明细",
+                    concept_id=f"concept_{cst.table_name}_{primary_field}",
+                    name=concept_name,
+                    aliases=aliases,
+                    description=f"关于系统核心执行中实体（如托盘/工位）的最新实时作业与物理调度信息",
                     canonical_source={
                         "type": "database",
-                        "table": "ordersys_dock_task",
-                        "field": "current_pallet_slot",
+                        "table": cst.table_name,
+                        "field": primary_field,
                     },
-                    secondary_sources=["调度运行日志"],
-                    do_not_use_as_primary=["ordersys_dispatch_callback_receipt", "ordersys_processed_callback"] if has_receipt else [],
-                    query_guidance="查询当前月台或最新托盘时，优先通过 ordersys_dock_task ORDER BY id DESC LIMIT 1 获取 current_pallet_slot 字段",
+                    secondary_sources=["系统执行日志"],
+                    do_not_use_as_primary=callback_tables,
+                    query_guidance=f"查询当前实时状态时，优先通过 {cst.table_name} ORDER BY id DESC LIMIT 1 查询 {primary_field} 字段",
                     confidence="confirmed",
-                    sources=["model_analysis", "schema_analysis"],
+                    sources=["code_feature_inference"],
                 )
             )
 
             sot_rules.append(
                 SourceOfTruthRule(
-                    fact="当前月台正在处理哪一托或最新一托调度状态",
-                    canonical_source="ordersys_dock_task.current_pallet_slot",
-                    secondary_sources=["dispatch application logs"],
-                    invalid_primary_sources=["ordersys_dispatch_callback_receipt"] if has_receipt else [],
-                    reason="ordersys_dock_task 是调度执行核心主状态源，而 callback_receipt 仅为历史异步通信报文，不能代表现场当前物理状态",
+                    fact=f"当前物理现场正在处理的实时状态或最新调度任务",
+                    canonical_source=f"{cst.table_name}.{primary_field}",
+                    secondary_sources=["调度运行日志"],
+                    invalid_primary_sources=callback_tables,
+                    reason=f"{cst.table_name} 是维护物理现场活跃状态的权威主表；而回执流水表仅记录历史异步报文，严禁作为当前物理现场依据",
                     confidence="confirmed",
                     sources=["domain_rule"],
                 )
             )
 
-        if has_receipt:
+        # 3.2 从 callback / receipt 表提炼异步回执概念
+        for cbt in [t for t in tables if t.table_type == "callback"]:
             concepts.append(
                 BusinessConcept(
-                    concept_id="dispatch_receipt",
+                    concept_id=f"receipt_{cbt.table_name}",
                     name="调度完成回执",
-                    aliases=["到货回执", "调度回调", "第三方回调确认"],
-                    description="外部调度系统回传的历史完成确认报文流水",
+                    aliases=["调度回调", "到货回执", "第三方回调确认", "完成回执", "收到调度完成回执"],
+                    description=f"外部调度系统异步回传的历史确认报文流水 ({cbt.table_name})",
                     canonical_source={
                         "type": "database",
-                        "table": "ordersys_dispatch_callback_receipt",
-                        "field": "received_at",
+                        "table": cbt.table_name,
+                        "field": cbt.important_fields[0] if cbt.important_fields else "id",
                     },
-                    secondary_sources=["integration logs"],
-                    query_guidance="仅在排查外部接口是否已收到回执或对账时查询",
+                    secondary_sources=["集成网络通信日志"],
+                    do_not_use_as_primary=[],
+                    query_guidance=f"仅在排查外部接口是否已发送回执或进行对账核验时查询表 {cbt.table_name}",
                     confidence="confirmed",
                     sources=["schema_analysis"],
                 )
@@ -214,11 +234,11 @@ class KnowledgeSynthesizer:
 
             sot_rules.append(
                 SourceOfTruthRule(
-                    fact="第三方是否已回调某次调度完成",
-                    canonical_source="ordersys_dispatch_callback_receipt",
+                    fact=f"第三方系统是否已回调某次调度完成",
+                    canonical_source=cbt.table_name,
                     secondary_sources=["integration logs"],
                     invalid_primary_sources=[],
-                    reason="callback_receipt 专门用于记录外部系统的调度完成回执流水",
+                    reason=f"{cbt.table_name} 专门记录外部系统的异步通信与回调流水",
                     confidence="confirmed",
                     sources=["domain_rule"],
                 )
@@ -247,7 +267,7 @@ class KnowledgeSynthesizer:
                 code_locations.append(
                     CodeLocation(
                         concept=f"ORM: {ent.name}",
-                        module=ent.file_path.split("/")[0],
+                        module=ent.file_path.split("/")[0] if "/" in ent.file_path else "root",
                         file=ent.file_path,
                         symbol=ent.name,
                         purpose=f"映射数据表 `{ent.mapped_table}`",
@@ -271,6 +291,7 @@ class KnowledgeSynthesizer:
             states=states,
             source_of_truth_rules=sot_rules,
             code_locations=code_locations,
+            metadata={"code_graph": code_res.code_graph or {}},
         )
 
     def _synthesize_via_glm(
@@ -279,7 +300,7 @@ class KnowledgeSynthesizer:
         schema_res: SchemaScanResult,
         code_res: CodeScanResult,
     ) -> Optional[ProjectBlueprint]:
-        """通过 GLM-5.3-Flash 进行结构化提炼"""
+        """通过 GLM-5.3-Flash 进行结构化提炼 (通用工业架构提纯提示词)"""
         client = GlmClient(glm_cfg=self.glm_cfg)
         evidence_summary = {
             "project_name": self.config.project_name,
@@ -300,35 +321,35 @@ class KnowledgeSynthesizer:
             "enums": code_res.enums[:10],
         }
 
-        prompt = f"""请根据以下从工业项目静态代码和数据库元数据中扫描出的确凿证据，提炼出结构化的项目业务认知蓝图 (Project Blueprint)。
-必须输出严格合法的单个 JSON 对象，禁止输出任何 markdown 代码块外部的解释废话。
+        prompt = f"""请根据以下工业项目静态代码和数据库元数据中的客观证据，提炼出通用的项目业务认知蓝图 (Project Blueprint)。
+必须输出严格合法的单个 JSON 对象，禁止输出任何 markdown 外部的废话。
 
 【扫描证据摘要】:
 {json.dumps(evidence_summary, ensure_ascii=False, indent=2)}
 
-【核心提炼要求】:
-1. 区分“当前主状态表”（如 ordersys_dock_task）与“历史流水/通信回执表”（如 ordersys_dispatch_callback_receipt）。
-2. 在 source_of_truth_rules 中明确：查询月台实时/最新托盘调度信息必须以主任务表的 current_pallet_slot 为准，严禁将历史 callback_receipt 视为主源。
-3. 提取核心概念：如“当前托盘/最新一托”、“调度回执”。
+【核心通用提炼准则】:
+1. 依据代码和表结构中的字段与命名特征，识别“当前实时作业/主状态表”与“异步回调回执表/历史日志表”。
+2. 在 source_of_truth_rules 中明确：查询现场实时状态（如当前托盘、当前设备、当前任务）必须以主状态表为准，严禁将仅用于历史通信记录的 callback/receipt/audit 表视为主源。
+3. 提取系统核心业务概念，输出对应的权威数据源与严禁主源。
 
-【JSON 输出结构样例】:
+【JSON 输出结构】:
 {{
   "business_concepts": [
     {{
-      "concept_id": "current_pallet",
-      "name": "当前托盘",
-      "aliases": ["最新一托", "当前一托"],
-      "description": "...",
-      "canonical_source": {{"table": "ordersys_dock_task", "field": "current_pallet_slot"}},
-      "do_not_use_as_primary": ["ordersys_dispatch_callback_receipt"]
+      "concept_id": "string",
+      "name": "string",
+      "aliases": ["string"],
+      "description": "string",
+      "canonical_source": {{"table": "string", "field": "string"}},
+      "do_not_use_as_primary": ["string"]
     }}
   ],
   "source_of_truth_rules": [
     {{
-      "fact": "当前月台正在处理哪一托",
-      "canonical_source": "ordersys_dock_task.current_pallet_slot",
-      "invalid_primary_sources": ["ordersys_dispatch_callback_receipt"],
-      "reason": "..."
+      "fact": "string",
+      "canonical_source": "string",
+      "invalid_primary_sources": ["string"],
+      "reason": "string"
     }}
   ]
 }}
@@ -337,14 +358,12 @@ class KnowledgeSynthesizer:
         resp = client.chat(messages=messages, temperature=0.1)
         content = resp.get("content", "").strip()
 
-        # 提取 JSON
         if "```json" in content:
             content = content.split("```json")[1].split("```")[0].strip()
         elif "```" in content:
             content = content.split("```")[1].split("```")[0].strip()
 
         data = json.loads(content)
-        # 基于规则底座打底，再融入 LLM 提炼的高级语义
         base_bp = self._synthesize_deterministic(tree_res, schema_res, code_res)
 
         if "business_concepts" in data and isinstance(data["business_concepts"], list):

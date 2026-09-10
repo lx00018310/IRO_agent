@@ -1,13 +1,14 @@
 import json
 import re
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from iro_agent.knowledge.models import ProjectBlueprint
 from iro_agent.knowledge.schema_scanner import SchemaScanResult
 from iro_agent.knowledge.code_scanner import CodeScanResult
+from iro_agent.knowledge.code_graph import CodeRelationshipGraph
 
 
 class BlueprintValidator:
-    """项目认知蓝图合法性与安全性交叉校验器"""
+    """项目认知蓝图合法性、证据链与安全性交叉校验器"""
 
     SENSITIVE_PATTERNS = [
         re.compile(r"password\s*[:=]\s*['\"][^'\"]+['\"]", re.IGNORECASE),
@@ -21,7 +22,7 @@ class BlueprintValidator:
         schema_res: SchemaScanResult,
         code_res: CodeScanResult,
     ) -> Tuple[ProjectBlueprint, List[str]]:
-        """执行交叉校验并返回修正后的蓝图与告警列表"""
+        """执行全要素交叉校验并返回修正后的蓝图与告警列表"""
         warnings: List[str] = []
 
         valid_tables = {t.table_name.lower() for t in schema_res.tables}
@@ -29,13 +30,18 @@ class BlueprintValidator:
             if ent.mapped_table:
                 valid_tables.add(ent.mapped_table.lower())
 
+        # 从代码关系图中提取所有引用的表
+        graph = CodeRelationshipGraph.from_dict(code_res.code_graph) if code_res.code_graph else None
+        if graph:
+            for ent in graph.entities.values():
+                if ent.entity_type == "table":
+                    valid_tables.add(ent.name.lower())
+
         # 1. 校验 Source of Truth Rules
         sanitized_rules = []
         for r in blueprint.source_of_truth_rules:
-            # 提取主表名
             canon_tbl = r.canonical_source.split(".")[0].lower()
             if valid_tables and canon_tbl not in valid_tables:
-                # 表不存在，降级置信度或告警
                 warnings.append(f"SoT 规则中的主表 '{canon_tbl}' 在已知 Schema 或代码实体中未发现，降级为 inferred")
                 r.confidence = "inferred"
 
