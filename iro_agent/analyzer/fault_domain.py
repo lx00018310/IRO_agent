@@ -72,23 +72,33 @@ class FaultDomainClassifier:
                 if "robot" in msg_lower or "dispatch" in msg_lower:
                     domain_evidence["Robot"].append("调度或机器人通信链路异常")
 
-        # 3. 分析故障现象关键词
+        # 3. 区分系统客观证据与用户主观描述线索 (症状线索不能单独提升置信度)
         symptom_lower = symptom.lower() if symptom else ""
+        user_clues: Dict[str, List[str]] = {d: [] for d in ALL_DOMAINS}
         if any(kw in symptom_lower for kw in ["拒收", "物料", "上车", "装车", "卡死", "阻塞"]):
-            domain_evidence["Backend"].append("业务阻塞发生在装车/调度业务逻辑处理流程中")
+            user_clues["Backend"].append("用户描述提及装车/调度/拒收业务现象 (主观线索)")
 
-        # 4. 综合评级：严格遵循证据完整性规则
+        # 4. 综合评级：严格区分客观证据与主观线索
         for domain in ALL_DOMAINS:
-            ev_list = domain_evidence[domain]
+            sys_ev = domain_evidence[domain]
+            clues = user_clues[domain]
+            all_ev = sys_ev + clues
+
             if domain in explicit_ruled_out:
                 domain_confidence[domain] = "Mostly ruled out"
-            elif ev_list:
-                if len(ev_list) >= 2:
+            elif sys_ev:
+                # 存在客观系统证据 (日志/发布/数据库)
+                if len(sys_ev) >= 2 or (len(sys_ev) >= 1 and clues):
                     domain_confidence[domain] = "High"
                 else:
                     domain_confidence[domain] = "Medium"
+                domain_evidence[domain] = all_ev
+            elif clues:
+                # 仅有用户提问主观线索，无任何系统客观凭证支撑：严格维持 Insufficient evidence
+                domain_confidence[domain] = "Insufficient evidence"
+                domain_evidence[domain] = ["仅有用户主观提问线索，缺乏工控机日志或发布变动等客观系统证据"]
             else:
-                # 核心修正：缺乏证据必须评定为 Insufficient evidence，严禁判定为 Mostly ruled out！
+                # 缺乏任何证据
                 domain_confidence[domain] = "Insufficient evidence"
 
         return {

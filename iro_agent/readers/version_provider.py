@@ -79,13 +79,16 @@ class GitReaderAdapter(VersionReader):
                     "summary": latest["summary"],
                     "date": latest["date"],
                     "author": latest["author"],
-                    "is_running_detected": True,
-                    "pointer_source": "Git HEAD",
+                    "version_type": "source_code_version",
+                    "is_running_detected": False,
+                    "pointer_source": "Git HEAD (仅代表源码工作区版本)",
+                    "note": "Git HEAD 仅能证实本地源码仓库状态，不能作为工控机现场已确认运行版本",
                 }
         except Exception:
             pass
         return {
             "version": "UNKNOWN",
+            "version_type": "source_code_version",
             "is_running_detected": False,
             "pointer_source": "unknown",
         }
@@ -153,7 +156,10 @@ class WReleaseReaderAdapter(VersionReader):
         return "WReleaseReader"
 
     def get_current_version(self) -> Optional[Dict[str, Any]]:
-        return self.reader.get_running_release()
+        res = self.reader.get_running_release()
+        if res:
+            res["version_type"] = "running_release"
+        return res
 
     def get_recent_versions(self, limit: int = 10) -> List[Dict[str, Any]]:
         return self.reader.list_available_releases(limit=limit)

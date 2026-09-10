@@ -139,14 +139,33 @@ class DiagnosticOrchestrator:
         evidence_list = []
         evidence_list.append(f"当前活跃版本源: {self.active_version_provider}")
         if running_ver_info:
+            v_type = running_ver_info.get("version_type", "running_release")
             c_ver = running_ver_info.get("confirmed_running_release") or running_ver_info.get("version") or "UNKNOWN"
-            evidence_list.append(f"现场运行版本: {c_ver} (指针来源: {running_ver_info.get('pointer_source', '未知')})")
+            if v_type == "source_code_version":
+                evidence_list.append(f"当前源码版本: {c_ver} (来源: {running_ver_info.get('pointer_source', 'Git HEAD')})")
+            else:
+                evidence_list.append(f"现场运行版本: {c_ver} (指针来源: {running_ver_info.get('pointer_source', '未知')})")
         if time_correlation.get("summary"):
             evidence_list.append(f"时序分析: {time_correlation['summary']}")
         if logs:
             evidence_list.append(f"捕获到 {len(logs)} 条关联运行报错 (首次报错时间: {first_error_time or '未知'})")
 
-        res = {
+        # 9. 沉淀结构化数据至故障记忆库 (单点写入)
+        inc_id = self.memory_store.record_incident({
+            "symptom": symptom[:100],
+            "fault_domain": primary_domain,
+            "severity": impact.get("severity", "Unknown"),
+            "confidence": fault_domains.get(primary_domain, {}).get("confidence", "Medium"),
+            "impact_scope": impact.get("functions_status", {}),
+            "related_logs": [lg.get("message", "")[:100] for lg in logs[:5]],
+            "related_git_commits": [ve["version_id"] for ve in version_events if ve["source_type"] == "git"],
+            "related_wrelease_versions": [ve["version_id"] for ve in version_events if ve["source_type"] == "wrelease"],
+            "active_version_provider": self.active_version_provider,
+            "timeline_event_ids": [e["event_id"] for e in timeline_events],
+        })
+
+        return {
+            "incident_id": inc_id,
             "symptom": symptom,
             "active_version_provider": self.active_version_provider,
             "primary_fault_domain": primary_domain,
@@ -160,27 +179,12 @@ class DiagnosticOrchestrator:
             "release_diff": recent_release_diff,
         }
 
-        # 9. 沉淀结构化数据至故障记忆库
-        self.memory_store.record_incident({
-            "symptom": symptom[:100],
-            "fault_domain": primary_domain,
-            "severity": impact.get("severity", "P2"),
-            "confidence": fault_domains.get(primary_domain, {}).get("confidence", "Medium"),
-            "impact_scope": impact.get("functions_status", {}),
-            "related_logs": [lg.get("message", "")[:100] for lg in logs[:5]],
-            "related_git_commits": [ve["version_id"] for ve in version_events if ve["source_type"] == "git"],
-            "related_wrelease_versions": [ve["version_id"] for ve in version_events if ve["source_type"] == "wrelease"],
-            "active_version_provider": self.active_version_provider,
-            "timeline_event_ids": [e["event_id"] for e in timeline_events],
-        })
-
-        return res
-
     def _analyze_time_correlation(
         self, first_error_time: Optional[str], version_events: List[Dict[str, Any]]
     ) -> Dict[str, Any]:
         """
-        严格评估首次异常时间与版本变动的时间先后关系。
+        严格评估首次异常时间与版本变动的双向区间时序关系：
+        精确定位异常发生前最近的版本 (before_event) 与异常发生后最近的版本 (after_event)。
         禁止无直接事实证据直接推断因果关系。
         """
         if not first_error_time or not version_events:
@@ -188,32 +192,64 @@ class DiagnosticOrchestrator:
                 "relationship": "Insufficient evidence",
                 "summary": "缺乏确凿的版本更新时间或首次报错时间戳，无法确定时序先后关系。",
                 "first_error_time": first_error_time,
-                "latest_version_time": None,
+                "before_version": None,
+                "after_version": None,
             }
 
-        # 获取最近一次版本更新时间
-        sorted_vers = sorted(version_events, key=lambda x: str(x.get("timestamp", "")), reverse=True)
-        latest_ver_event = sorted_vers[0]
-        latest_ver_time = latest_ver_event.get("timestamp", "")[:19]
+        first_err_clean = first_error_time[:19].replace("_", " ").replace("T", " ")
 
-        first_err_clean = first_error_time[:19]
-        if first_err_clean > latest_ver_time:
+        # 归一化并按时间升序排序
+        def _get_ts(v):
+            return str(v.get("timestamp", ""))[:19].replace("_", " ").replace("T", " ")
+
+        sorted_vers = sorted(version_events, key=_get_ts)
+
+        before_event = None
+        after_event = None
+
+        for ve in sorted_vers:
+            vt = _get_ts(ve)
+            if not vt:
+                continue
+            if vt <= first_err_clean:
+                before_event = ve
+            elif vt > first_err_clean and after_event is None:
+                after_event = ve
+
+        before_ver_id = before_event.get("version_id") if before_event else None
+        before_ver_time = _get_ts(before_event) if before_event else None
+        after_ver_id = after_event.get("version_id") if after_event else None
+        after_ver_time = _get_ts(after_event) if after_event else None
+
+        if before_event and after_event:
+            rel = "Occurred in-between version changes"
+            summary = (
+                f"首次报错发生于 {first_err_clean}：晚于版本更新 {before_ver_id} ({before_ver_time})，"
+                f"早于版本更新 {after_ver_id} ({after_ver_time})。"
+                f"异常发生在 {before_ver_id} 运行周期内（注：时序承接关系并不等同于因果关系，需结合调用链确认）。"
+            )
+        elif before_event and not after_event:
             rel = "Occurred after the version change"
             summary = (
-                f"首次报错发生于 {first_err_clean}，晚于最近一次版本更新 ({latest_ver_time})。"
-                f"存在时间上的先后承接关系（注：时序相关并不等同于因果关系，需结合调用链进一步确认）。"
+                f"首次报错发生于 {first_err_clean}：晚于最近一次版本更新 {before_ver_id} ({before_ver_time})。"
+                f"存在时间上的先后承接关系（注：时序相关并不等同于因果关系）。"
             )
-        elif first_err_clean < latest_ver_time:
+        elif not before_event and after_event:
             rel = "Occurred before the version change"
-            summary = f"首次报错发生于 {first_err_clean}，早于最近一次版本更新 ({latest_ver_time})，该异常在版本发布前即已存在。"
+            summary = (
+                f"首次报错发生于 {first_err_clean}：早于后续版本更新 {after_ver_id} ({after_ver_time})。"
+                f"该异常在 {after_ver_id} 发布前即已存在。"
+            )
         else:
-            rel = "Strong temporal relationship"
-            summary = f"报错时间与版本更新时间极为接近 ({first_err_clean})。"
+            rel = "Insufficient evidence"
+            summary = "无法建立有效的时间区间比对。"
 
         return {
             "relationship": rel,
             "summary": summary,
             "first_error_time": first_err_clean,
-            "latest_version_time": latest_ver_time,
-            "version_id": latest_ver_event.get("version_id"),
+            "before_version": before_ver_id,
+            "before_version_time": before_ver_time,
+            "after_version": after_ver_id,
+            "after_version_time": after_ver_time,
         }

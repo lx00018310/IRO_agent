@@ -78,17 +78,33 @@ def init_agent_engine(config: IROConfig) -> GlmClient:
 
     client = GlmClient(glm_cfg=config.glm, audit_logger=audit)
 
-    # 注册版本读取工具
-    client.register_tool_handler("version_provider_info", lambda: {
-        "active_version_provider": active_provider,
-        "is_available": version_reader.is_available() if version_reader else False,
-        "current_version": version_reader.get_current_version() if version_reader else None,
-    })
-    client.register_tool_handler("wrelease_list", lambda: wrelease_reader.list_available_releases())
-    client.register_tool_handler("wrelease_running", lambda: wrelease_reader.get_running_release())
-    client.register_tool_handler("wrelease_compare", lambda ver_a, ver_b: wrelease_reader.compare_releases(ver_a, ver_b))
+    # 注册统一版本抽象工具（隔离底层 Git / WRelease 实现细节）
+    client.register_tool_handler(
+        "version_current",
+        lambda: version_reader.get_current_version() if version_reader else {
+            "version": "UNKNOWN",
+            "version_type": "none",
+            "is_running_detected": False,
+            "pointer_source": "none",
+        },
+    )
+    client.register_tool_handler(
+        "version_recent",
+        lambda limit=10: version_reader.get_recent_versions(limit=limit) if version_reader else [],
+    )
+    client.register_tool_handler(
+        "version_compare",
+        lambda ver_a, ver_b: version_reader.compare_versions(ver_a, ver_b) if version_reader else {
+            "from_release": ver_a,
+            "to_release": ver_b,
+            "has_changes": False,
+        },
+    )
+    client.register_tool_handler(
+        "version_events",
+        lambda start_time=None, end_time=None: version_reader.get_version_events(start_time=start_time, end_time=end_time) if version_reader else [],
+    )
     client.register_tool_handler("log_search", lambda **kwargs: log_reader.search_logs(**kwargs))
-    client.register_tool_handler("git_recent_commits", lambda limit=20: git_reader.get_recent_commits(limit=limit))
     client.register_tool_handler("code_search", lambda query: code_reader.search_code(query))
     client.register_tool_handler("memory_similar_stats", lambda keyword: memory_store.get_similar_incident_stats(keyword))
     client.register_tool_handler("db_query", lambda query, max_rows=20: db_reader.execute_query(query, max_rows=max_rows))
@@ -236,17 +252,7 @@ def cmd_chat(args):
 
             print(reply)
 
-            # 仅当确认属于真实故障事件时，才沉淀至故障记忆库，防止普通查询与闲聊污染
-            if _is_fault_incident(user_input, reply):
-                from iro_agent.readers.version_provider import VersionReaderResolver
-                _, act_prov = VersionReaderResolver.resolve(config=config)
-                memory_store.record_incident({
-                    "symptom": clean_prompt[:100],
-                    "user_question": user_input,
-                    "status": "investigated",
-                    "resolution_summary": reply[:300],
-                    "active_version_provider": act_prov,
-                })
+            # 故障记忆由 DiagnosticOrchestrator 在诊断流水线中统一单点沉淀，CLI 仅负责呈现，杜绝重复记录
 
         except (KeyboardInterrupt, EOFError):
             print("\n退出诊断控制台。")

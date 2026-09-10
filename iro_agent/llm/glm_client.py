@@ -54,13 +54,34 @@ class GlmClient:
             {
                 "type": "function",
                 "function": {
-                    "name": "wrelease_compare",
-                    "description": "比对两个 WRelease 交付版本的模块 SHA256 变动情况",
+                    "name": "version_current",
+                    "description": "查询当前项目的版本状态（若底层为 Git 则返回当前源码版本；若底层为 WRelease 则返回现场已确认运行版本或 UNKNOWN）",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "version_recent",
+                    "description": "查询当前项目最近的版本发布或提交记录列表",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "ver_a": {"type": "string", "description": "源版本号或文件名"},
-                            "ver_b": {"type": "string", "description": "目标版本号或文件名"},
+                            "limit": {"type": "integer", "description": "返回数量，默认 10"},
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "version_compare",
+                    "description": "比对当前项目中两个版本之间的代码 diff 或交付模块变动",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "ver_a": {"type": "string", "description": "源版本号或提交哈希"},
+                            "ver_b": {"type": "string", "description": "目标版本号或提交哈希"},
                         },
                         "required": ["ver_a", "ver_b"],
                     },
@@ -69,30 +90,14 @@ class GlmClient:
             {
                 "type": "function",
                 "function": {
-                    "name": "wrelease_list",
-                    "description": "列出所有可用的 WRelease 历史版本包",
-                    "parameters": {"type": "object", "properties": {}},
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "wrelease_running",
-                    "description": "探测现场工控机当前正在运行的 WRelease 版本（若无指针则降级标明）",
-                    "parameters": {"type": "object", "properties": {}},
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "wrelease_git_map",
-                    "description": "将指定的 WRelease 版本映射关联到对应的 Git Commit 提交记录与改动说明",
+                    "name": "version_events",
+                    "description": "获取归一化时间戳的版本变动事件列表，供时序比对与分析",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "version": {"type": "string", "description": "版本号，如 v8.13.6"},
+                            "start_time": {"type": "string", "description": "可选起始时间 ISO 格式"},
+                            "end_time": {"type": "string", "description": "可选结束时间 ISO 格式"},
                         },
-                        "required": ["version"],
                     },
                 },
             },
@@ -107,19 +112,6 @@ class GlmClient:
                             "keyword": {"type": "string", "description": "关键词"},
                             "level": {"type": "string", "description": "日志级别 (ERROR/WARN)"},
                             "max_results": {"type": "integer", "description": "最大条数"},
-                        },
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "git_recent_commits",
-                    "description": "查询源代码仓库最近的提交记录",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "limit": {"type": "integer", "description": "返回数量"},
                         },
                     },
                 },

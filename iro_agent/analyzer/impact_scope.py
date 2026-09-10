@@ -44,8 +44,9 @@ class ImpactScopeEvaluator:
                 if fn in functions_status:
                     functions_status[fn] = "Normal"
 
-        severity = "P2"
-        severity_reason = "部分功能可能受损，现场状态持续评估中。"
+        # 核心完整性修复：无确凿证据时，严重级别严禁默认 P2，必须初始化为 Unknown
+        severity = "Unknown"
+        severity_reason = "暂无直接事实证据表明业务受损，受损等级处于未知状态。"
 
         # 根据确凿证据与症状判定受影响项 (Affected)
         if any(kw in symptom_lower for kw in ["卡死", "卡住", "中断", "无法装车", "停线", "崩溃", "全部失败", "拒收", "物料拒收"]):

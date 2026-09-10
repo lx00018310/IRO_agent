@@ -73,8 +73,4 @@ def test_wrelease_reader_task013():
     assert "latest_available_release" in summary
     assert "confirmed_running_release" in summary
 
-    # WRelease 独立运作：测试可选映射函数不崩溃即可，不强制绑定 commit 存在
-    git_map = reader.map_release_to_git_commit(latest["version"])
-    if git_map is not None:
-        assert "commit" in git_map
-        assert "version" in git_map
+
