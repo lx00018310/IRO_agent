@@ -16,6 +16,9 @@ from lark_oapi.api.im.v1 import (
     ReplyMessageRequest,
     ReplyMessageRequestBody,
     GetMessageResourceRequest,
+    CreateMessageReactionRequest,
+    CreateMessageReactionRequestBody,
+    Emoji,
 )
 
 from iro_agent.config import get_config, IROConfig
@@ -313,6 +316,9 @@ class FeishuGateway(GatewayAdapter):
             user_id=msg.user_id,
         )
 
+        # 立即添加 OK 表情反应，向用户确认消息已接收并正在处理 (类似 Hermes)
+        self.add_reaction(message_id=msg.message_id, emoji_type="OK")
+
         try:
             # 维护上下文会话
             history = self.session_history.setdefault(session_id, [])
@@ -359,6 +365,32 @@ class FeishuGateway(GatewayAdapter):
                     os.remove(tmp_image_to_use)
                 except Exception as ex:
                     logger.warning(f"清理临时图片失败: {ex}")
+
+    def add_reaction(self, message_id: str, emoji_type: str = "OK") -> bool:
+        """为收到的消息添加表情回复（如 OK 手势），向用户确认已收到并正在处理"""
+        if not self.client or not message_id:
+            return False
+        try:
+            request = (
+                CreateMessageReactionRequest.builder()
+                .message_id(message_id)
+                .request_body(
+                    CreateMessageReactionRequestBody.builder()
+                    .reaction_type(Emoji.builder().emoji_type(emoji_type).build())
+                    .build()
+                )
+                .build()
+            )
+            response = self.client.im.v1.message_reaction.create(request)
+            if response.success():
+                print(f"[飞书表情] 成功为消息添加 [{emoji_type}] 表情确认: message_id={message_id[:16]}...")
+                return True
+            else:
+                logger.warning(f"添加飞书表情反应失败 (code={response.code}, msg={response.msg})")
+                return False
+        except Exception as e:
+            logger.warning(f"添加飞书表情反应异常: {e}")
+            return False
 
     def send_message(self, chat_id: str, text: str, reply_to_message_id: Optional[str] = None) -> bool:
         """调用飞书 OpenAPI 回复/发送文本消息"""

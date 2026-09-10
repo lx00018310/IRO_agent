@@ -377,3 +377,34 @@ def test_09_http_gateway_arbitrary_path_rejection():
         assert exc_info.value.code == 400
     finally:
         adapter.stop()
+
+
+def test_10_reaction_emoji_on_message(sample_config, mock_glm_client, tmp_path):
+    """Test 10: 收到提问消息时自动调用 add_reaction 添加 OK 表情确认"""
+    dedup_db = str(tmp_path / "test_dedup_rx.db")
+    gw = FeishuGateway(config=sample_config, glm_client=mock_glm_client, dedup_db_path=dedup_db)
+    gw.send_message = MagicMock(return_value=True)
+    gw.add_reaction = MagicMock(return_value=True)
+
+    fake_event = {
+        "header": {"event_id": "evt_rx_001"},
+        "event": {
+            "sender": {"sender_id": {"open_id": "ou_user_test_rx"}},
+            "message": {
+                "message_id": "om_msg_rx_999",
+                "chat_id": "oc_p2p_chat_rx",
+                "chat_type": "p2p",
+                "message_type": "text",
+                "content": json.dumps({"text": "测试 Hermes 式表情确认"}),
+                "create_time": "1725920000",
+            },
+        },
+    }
+
+    gw._on_message_receive(fake_event)
+
+    # 验证第一时间触发了 add_reaction 并且 message_id 正确，emoji 为 OK
+    gw.add_reaction.assert_called_once_with(message_id="om_msg_rx_999", emoji_type="OK")
+    # 验证同时正常发送了回答
+    gw.send_message.assert_called_once()
+
