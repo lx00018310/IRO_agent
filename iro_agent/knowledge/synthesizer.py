@@ -167,25 +167,16 @@ class KnowledgeSynthesizer:
 
             primary_field = current_fields[0] if current_fields else "id"
 
-            # 通用概念推导 (解析字段词义，例如 current_pallet_slot -> 托盘)
-            concept_name = "当前物理作业状态"
-            aliases = ["实时作业状态", "最新调度信息", "当前执行状态", "当前调度托盘"]
-            if "pallet" in primary_field.lower() or "pallet" in cst.table_name.lower():
-                concept_name = "当前托盘"
-                aliases = ["最新一托", "当前一托", "正在处理的托盘", "最新托盘", "当前调度托盘", "当前11号月台正在处理什么"]
-            elif "agv" in primary_field.lower() or "agv" in cst.table_name.lower():
-                concept_name = "当前AGV状态"
-                aliases = ["最新AGV", "当前车辆", "正在运行的AGV"]
-            elif "dock" in cst.table_name.lower() or "station" in primary_field.lower():
-                concept_name = "当前工位作业"
-                aliases = ["当前月台", "最新月台任务", "工位实时作业"]
+            # 通用特征推导：从表名和字段特征提取候选概念 (零业务场景硬编码)
+            concept_name = f"{cst.table_name} 实时状态"
+            aliases = [f"{cst.table_name}状态", f"{primary_field}状态", "实时运行状态", "当前作业状态"]
 
             concepts.append(
                 BusinessConcept(
                     concept_id=f"concept_{cst.table_name}_{primary_field}",
                     name=concept_name,
                     aliases=aliases,
-                    description=f"关于系统核心执行中实体（如托盘/工位）的最新实时作业与物理调度信息",
+                    description=f"关于系统核心执行中实体或任务的最新实时状态信息 ({cst.table_name}.{primary_field})",
                     canonical_source={
                         "type": "database",
                         "table": cst.table_name,
@@ -193,32 +184,32 @@ class KnowledgeSynthesizer:
                     },
                     secondary_sources=["系统执行日志"],
                     do_not_use_as_primary=callback_tables,
-                    query_guidance=f"查询当前实时状态时，优先通过 {cst.table_name} ORDER BY id DESC LIMIT 1 查询 {primary_field} 字段",
-                    confidence="confirmed",
+                    query_guidance=f"查询当前实时状态时，建议优先通过 {cst.table_name} ORDER BY id DESC LIMIT 1 查询 {primary_field} 字段",
+                    confidence="strongly_inferred",
                     sources=["code_feature_inference"],
                 )
             )
 
             sot_rules.append(
                 SourceOfTruthRule(
-                    fact=f"当前物理现场正在处理的实时状态或最新调度任务",
+                    fact=f"{cst.table_name} 的实时主状态或最新执行进展",
                     canonical_source=f"{cst.table_name}.{primary_field}",
                     secondary_sources=["调度运行日志"],
                     invalid_primary_sources=callback_tables,
-                    reason=f"{cst.table_name} 是维护物理现场活跃状态的权威主表；而回执流水表仅记录历史异步报文，严禁作为当前物理现场依据",
-                    confidence="confirmed",
+                    reason=f"{cst.table_name} 是维护活跃状态的主表；而回执流水表仅记录历史异步报文，严禁作为当前物理现场依据",
+                    confidence="strongly_inferred",
                     sources=["domain_rule"],
                 )
             )
 
-        # 3.2 从 callback / receipt 表提炼异步回执概念
+        # 3.2 从 callback / receipt 表提炼异步通信概念
         for cbt in [t for t in tables if t.table_type == "callback"]:
             concepts.append(
                 BusinessConcept(
                     concept_id=f"receipt_{cbt.table_name}",
-                    name="调度完成回执",
-                    aliases=["调度回调", "到货回执", "第三方回调确认", "完成回执", "收到调度完成回执"],
-                    description=f"外部调度系统异步回传的历史确认报文流水 ({cbt.table_name})",
+                    name=f"{cbt.table_name} 外部异步通信记录",
+                    aliases=[f"{cbt.table_name}流水", "异步回调记录", "外部通信回执"],
+                    description=f"外部系统异步回传的历史确认报文流水 ({cbt.table_name})",
                     canonical_source={
                         "type": "database",
                         "table": cbt.table_name,
@@ -227,19 +218,19 @@ class KnowledgeSynthesizer:
                     secondary_sources=["集成网络通信日志"],
                     do_not_use_as_primary=[],
                     query_guidance=f"仅在排查外部接口是否已发送回执或进行对账核验时查询表 {cbt.table_name}",
-                    confidence="confirmed",
+                    confidence="strongly_inferred",
                     sources=["schema_analysis"],
                 )
             )
 
             sot_rules.append(
                 SourceOfTruthRule(
-                    fact=f"第三方系统是否已回调某次调度完成",
+                    fact=f"外部系统对 {cbt.table_name} 关联事项的历史异步回调或确认",
                     canonical_source=cbt.table_name,
                     secondary_sources=["integration logs"],
                     invalid_primary_sources=[],
                     reason=f"{cbt.table_name} 专门记录外部系统的异步通信与回调流水",
-                    confidence="confirmed",
+                    confidence="strongly_inferred",
                     sources=["domain_rule"],
                 )
             )

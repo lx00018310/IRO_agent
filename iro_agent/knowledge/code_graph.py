@@ -31,6 +31,18 @@ class CodeRelationshipGraph:
         """获取该实体发起调用/依赖的下游关系"""
         return self._outgoing_edges.get(entity_id, [])
 
+    def resolve_entity_id(self, entity_id_or_name: str) -> str:
+        """解析短名称或不完整 ID 至图内真实实体全限定 ID"""
+        if entity_id_or_name in self.entities:
+            return entity_id_or_name
+        candidates = [
+            eid for eid, ent in self.entities.items()
+            if ent.name == entity_id_or_name or eid.split(".")[-1] == entity_id_or_name
+        ]
+        if len(candidates) == 1:
+            return candidates[0]
+        return entity_id_or_name
+
     def trace_api_to_table(self, api_path: str) -> List[Dict[str, Any]]:
         """链路追溯: API -> Controller -> Service -> Mapper/Repo -> SQL/Table"""
         matched_chains: List[Dict[str, Any]] = []
@@ -47,7 +59,7 @@ class CodeRelationshipGraph:
                         if edge.relationship_type == "EXPOSES_API"
                     ]
                     for c_id in controller_callers:
-                        c_ent = self.get_entity(c_id)
+                        c_ent = self.get_entity(self.resolve_entity_id(c_id))
                         if c_ent and c_ent not in entry_nodes:
                             entry_nodes.append(c_ent)
                     if not controller_callers:
@@ -66,11 +78,12 @@ class CodeRelationshipGraph:
         }
 
         def dfs(current_id: str, current_path: List[Dict[str, Any]]):
-            curr_ent = self.get_entity(current_id)
+            resolved_curr_id = self.resolve_entity_id(current_id)
+            curr_ent = self.get_entity(resolved_curr_id)
             node_desc = {
-                "entity_id": current_id,
+                "entity_id": resolved_curr_id,
                 "entity_type": curr_ent.entity_type if curr_ent else "unknown",
-                "name": curr_ent.name if curr_ent else current_id,
+                "name": curr_ent.name if curr_ent else resolved_curr_id,
                 "file_path": curr_ent.file_path if curr_ent else "",
                 "start_line": curr_ent.start_line if curr_ent else 1,
             }
@@ -83,15 +96,19 @@ class CodeRelationshipGraph:
                 })
                 return
 
-            out_edges = self.find_callees(current_id)
+            out_edges = self.find_callees(resolved_curr_id)
+            if not out_edges and resolved_curr_id != current_id:
+                out_edges = self.find_callees(current_id)
+
             for edge in out_edges:
-                target_id = edge.target_entity_id
+                target_id = self.resolve_entity_id(edge.target_entity_id)
                 if edge.relationship_type in ALLOWED_RELS:
-                    edge_key = f"{current_id}->{target_id}"
+                    edge_key = f"{resolved_curr_id}->{target_id}"
                     if edge_key not in visited and len(new_path) < 12:
                         visited.add(edge_key)
                         dfs(target_id, new_path)
                         visited.remove(edge_key)
+
 
         for start_ent in entry_nodes:
             dfs(start_ent.entity_id, [])

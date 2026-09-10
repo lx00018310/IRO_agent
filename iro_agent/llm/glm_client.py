@@ -214,6 +214,34 @@ class GlmClient:
                     },
                 },
             },
+            {
+                "type": "function",
+                "function": {
+                    "name": "code_trace_api_to_table",
+                    "description": "基于代码拓扑调用图，从 API 路由全链路追踪到底层数据表 (API -> Controller -> Service -> Mapper -> SQL/Table)",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "api_path": {"type": "string", "description": "接口路由或 URL 路径片段（如 /api/orders, /callback）"},
+                        },
+                        "required": ["api_path"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "code_find_table_usage",
+                    "description": "基于代码拓扑关系图，反向查询指定数据表在代码中的读写、映射与调用方",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "table_name": {"type": "string", "description": "需要追溯的数据表名"},
+                        },
+                        "required": ["table_name"],
+                    },
+                },
+            },
         ]
 
     def chat_completion(

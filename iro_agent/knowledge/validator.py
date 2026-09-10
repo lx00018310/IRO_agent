@@ -62,7 +62,49 @@ class BlueprintValidator:
                     warnings.append(f"概念 '{c.name}' 绑定的表 '{tbl}' 在已知环境中未直接探知")
                     c.confidence = "inferred"
 
-        # 3. 敏感数据安全巡检
+        # 3. 代码关系图 (Code Relationship Graph) 结构与悬空边校验
+        if graph:
+            known_ids = set(graph.entities.keys())
+            valid_edges = []
+            dangling_count = 0
+
+            for edge in graph.edges:
+                src_resolved = graph.resolve_entity_id(edge.source_entity_id)
+                tgt_resolved = graph.resolve_entity_id(edge.target_entity_id)
+
+                src_exists = src_resolved in known_ids or edge.source_entity_id in known_ids
+                tgt_exists = tgt_resolved in known_ids or edge.target_entity_id in known_ids or (
+                    edge.relationship_type in ("READS_TABLE", "WRITES_TABLE", "MAPS_TO_TABLE")
+                    and edge.target_entity_id.lower().replace("table:", "") in valid_tables
+                )
+
+                if not src_exists:
+                    warnings.append(f"代码调用图边源实体缺失: '{edge.source_entity_id}' -> '{edge.target_entity_id}'")
+                    dangling_count += 1
+                    continue
+                if not tgt_exists:
+                    warnings.append(f"代码调用图边目标实体缺失: '{edge.source_entity_id}' -> '{edge.target_entity_id}'")
+                    dangling_count += 1
+                    continue
+
+                # 规范化边两端 ID 至解析后的实体 ID
+                edge.source_entity_id = src_resolved
+                edge.target_entity_id = tgt_resolved
+                valid_edges.append(edge)
+
+            if dangling_count > 0:
+                warnings.append(f"图完整性校验: 已过滤 {dangling_count} 条无效或悬空调用关系边")
+
+            # 重新构建无悬空边的关系图并回写元数据
+            clean_graph = CodeRelationshipGraph()
+            for ent in graph.entities.values():
+                clean_graph.add_entity(ent)
+            for e in valid_edges:
+                clean_graph.add_relationship(e)
+
+            blueprint.metadata["code_graph"] = clean_graph.to_dict()
+
+        # 4. 敏感数据安全巡检
         raw_json = json.dumps(blueprint.model_dump(), ensure_ascii=False)
         for pat in self.SENSITIVE_PATTERNS:
             if pat.search(raw_json):

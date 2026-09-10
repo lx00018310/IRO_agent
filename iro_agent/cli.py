@@ -112,6 +112,24 @@ def init_agent_engine(config: IROConfig) -> GlmClient:
     knowledge_store = ProjectKnowledgeStore(base_dir=Path(config.project_root) if Path(config.project_root).exists() else Path.cwd())
     lookup_engine = ProjectLookupEngine(store=knowledge_store)
 
+    from iro_agent.knowledge.code_graph import CodeRelationshipGraph
+
+    def _trace_api(api_path: str):
+        bp = knowledge_store.load_blueprint()
+        if bp and bp.metadata.get("code_graph"):
+            graph = CodeRelationshipGraph.from_dict(bp.metadata["code_graph"])
+            return graph.trace_api_to_table(api_path)
+        return {"error": "未发现已构建的代码关系图，请先运行 iro-agent init 进行知识提炼。"}
+
+    def _table_usage(table_name: str):
+        bp = knowledge_store.load_blueprint()
+        if bp and bp.metadata.get("code_graph"):
+            graph = CodeRelationshipGraph.from_dict(bp.metadata["code_graph"])
+            return graph.find_table_usage(table_name)
+        return {"error": "未发现已构建的代码关系图，请先运行 iro-agent init 进行知识提炼。"}
+
+    client.register_tool_handler("code_trace_api_to_table", _trace_api)
+    client.register_tool_handler("code_find_table_usage", _table_usage)
     client.register_tool_handler("project_lookup", lambda query: lookup_engine.lookup(query))
     client.register_tool_handler("db_list_tables", lambda: db_reader.list_tables())
     client.register_tool_handler("db_describe_table", lambda table_name: db_reader.describe_table(table_name))

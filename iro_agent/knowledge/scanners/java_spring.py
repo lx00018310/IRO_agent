@@ -18,6 +18,9 @@ class JavaSpringScanner(BaseCodeScannerAdapter):
     INJECTED_FIELD_PATTERN = re.compile(r"(?:private|protected|public)?\s+(?:final\s+)?([A-Z][a-zA-Z0-9_]+)\s+([a-zA-Z0-9_]+)\s*;")
     METHOD_DEF_PATTERN = re.compile(r"(?:public|protected|private)\s+([a-zA-Z0-9_<>,\s\[\]]+)\s+([a-zA-Z0-9_]+)\s*\(([^\)]*)\)")
 
+    IMPORT_PATTERN = re.compile(r"^\s*import\s+([a-zA-Z0-9_\.]+);", re.MULTILINE)
+    MAPPER_XML_PATTERN = re.compile(r"<mapper\s+namespace\s*=\s*['\"]([^'\"]+)['\"]", re.IGNORECASE)
+
     def detect(self) -> bool:
         if (self.project_root / "pom.xml").exists() or (self.project_root / "build.gradle").exists():
             return True
@@ -26,6 +29,60 @@ class JavaSpringScanner(BaseCodeScannerAdapter):
                 if f.endswith(".java"):
                     return True
         return False
+
+    @staticmethod
+    def _compute_method_end_line(lines: List[str], start_idx: int) -> int:
+        """根据花括号闭合深度精确计算 Java 方法的作用范围结束行 (1-indexed)"""
+        brace_level = 0
+        started = False
+        for i in range(start_idx - 1, len(lines)):
+            line = lines[i]
+            comment_idx = line.find("//")
+            if comment_idx != -1:
+                line = line[:comment_idx]
+            for ch in line:
+                if ch == '{':
+                    brace_level += 1
+                    started = True
+                elif ch == '}':
+                    brace_level -= 1
+                    if started and brace_level <= 0:
+                        return i + 1
+                elif ch == ';' and not started:
+                    return i + 1
+        return len(lines)
+
+    def _build_global_symbol_table(self, java_files: List[Path]) -> Dict[str, str]:
+        """第一阶段构建全局类与 Mapper 符号索引 (短类名 -> 全限定名)"""
+        symbol_map: Dict[str, str] = {}
+        for f in java_files:
+            try:
+                content = f.read_text(encoding="utf-8", errors="ignore")
+                pkg_match = self.PACKAGE_PATTERN.search(content)
+                pkg = pkg_match.group(1) if pkg_match else ""
+                for cm in self.CLASS_PATTERN.finditer(content):
+                    cls_name = cm.group(2)
+                    q_name = f"{pkg}.{cls_name}" if pkg else cls_name
+                    symbol_map[cls_name] = q_name
+            except Exception:
+                continue
+
+        # 扫描 MyBatis XML 中的 namespace 符号
+        for root_str, dirs, files in os.walk(self.project_root):
+            dirs[:] = [d for d in dirs if d.lower() not in {".git", "target", "build", "bin"}]
+            for f in files:
+                if f.endswith(".xml"):
+                    try:
+                        content = (Path(root_str) / f).read_text(encoding="utf-8", errors="ignore")
+                        ns_match = self.MAPPER_XML_PATTERN.search(content)
+                        if ns_match:
+                            ns = ns_match.group(1).strip()
+                            mapper_short = ns.split(".")[-1]
+                            symbol_map[mapper_short] = ns
+                    except Exception:
+                        continue
+
+        return symbol_map
 
     def scan(self) -> ScannerResult:
         entities: List[CodeEntityNode] = []
@@ -43,6 +100,9 @@ class JavaSpringScanner(BaseCodeScannerAdapter):
                 if f.endswith(".java"):
                     java_files.append(Path(root_str) / f)
 
+        # 1. 建立项目级符号表
+        global_symbols = self._build_global_symbol_table(java_files)
+
         for file_path in java_files:
             try:
                 content = file_path.read_text(encoding="utf-8", errors="ignore")
@@ -53,6 +113,13 @@ class JavaSpringScanner(BaseCodeScannerAdapter):
                 pkg_match = self.PACKAGE_PATTERN.search(content)
                 package_name = pkg_match.group(1) if pkg_match else ""
 
+                # 收集当前文件的 import
+                import_map: Dict[str, str] = {}
+                for imp_match in self.IMPORT_PATTERN.finditer(content):
+                    full_imp = imp_match.group(1).strip()
+                    short_imp = full_imp.split(".")[-1]
+                    import_map[short_imp] = full_imp
+
                 current_annotations: List[str] = []
                 current_class: Optional[str] = None
                 class_role = "generic"
@@ -61,6 +128,7 @@ class JavaSpringScanner(BaseCodeScannerAdapter):
                 injected_fields: Dict[str, str] = {}  # var_name -> TypeName
 
                 current_method_mapping: Optional[Dict[str, str]] = None
+                method_scopes: List[Dict[str, Any]] = []
 
                 for idx, line in enumerate(lines, 1):
                     line_strip = line.strip()
@@ -163,6 +231,13 @@ class JavaSpringScanner(BaseCodeScannerAdapter):
                             if m_name not in ("equals", "hashCode", "toString", "getClass", "clone", "notify", "wait"):
                                 class_id = f"{package_name}.{current_class}" if package_name else current_class
                                 method_id = f"{class_id}.{m_name}"
+                                m_end_line = self._compute_method_end_line(lines, idx)
+                                method_scopes.append({
+                                    "method_id": method_id,
+                                    "name": m_name,
+                                    "start_line": idx,
+                                    "end_line": m_end_line,
+                                })
 
                                 # 创建方法实体
                                 method_node = CodeEntityNode(
@@ -185,10 +260,10 @@ class JavaSpringScanner(BaseCodeScannerAdapter):
                                     )
                                 )
 
-                                # 如果存在路由注解或处于 Controller 中
-                                if current_method_mapping or class_role == "controller":
-                                    m_verb = current_method_mapping["method"] if current_method_mapping else "GET"
-                                    sub_p = current_method_mapping["path"] if current_method_mapping else f"/{m_name}"
+                                # 仅当显式存在路由注解时才建立 API 实体，严禁对普通方法自动伪造 API
+                                if current_method_mapping:
+                                    m_verb = current_method_mapping["method"]
+                                    sub_p = current_method_mapping["path"]
                                     full_p = f"/{class_request_path.strip('/')}/{sub_p.strip('/')}".replace("//", "/").rstrip("/")
                                     if not full_p:
                                         full_p = "/"
@@ -231,13 +306,26 @@ class JavaSpringScanner(BaseCodeScannerAdapter):
 
                                 current_method_mapping = None
 
-                # 全文扫描注入字段方法调用
+                # 符号解析辅助函数 (解析依赖类型至全限定 entity_id，防止链路断裂)
+                def resolve_symbol(t_name: str) -> str:
+                    if t_name in import_map:
+                        return import_map[t_name]
+                    if package_name:
+                        cand = f"{package_name}.{t_name}"
+                        if cand in global_symbols.values():
+                            return cand
+                    if t_name in global_symbols:
+                        return global_symbols[t_name]
+                    return t_name
+
+                # 精确扫描方法作用域内的依赖调用 (杜绝广播到全类方法造成虚假调用)
                 for var_name, type_name in injected_fields.items():
+                    resolved_target_id = resolve_symbol(type_name)
                     call_pattern = re.compile(rf"\b{re.escape(var_name)}\.([a-zA-Z0-9_]+)\s*\(")
                     for match in call_pattern.finditer(content):
                         called_method = match.group(1)
-                        src_id = f"{package_name}.{current_class}" if package_name else current_class
-                        target_id = type_name
+                        call_line = content[:match.start()].count("\n") + 1
+
                         rel_type = "CALLS"
                         if "Mapper" in type_name or "Dao" in type_name:
                             rel_type = "CALLS_MAPPER"
@@ -246,34 +334,33 @@ class JavaSpringScanner(BaseCodeScannerAdapter):
                         elif "Repository" in type_name:
                             rel_type = "CALLS_REPOSITORY"
 
-                        # 为类和具体方法建立下游调用边
+                        # 查找当前调用行属于哪个具体方法
+                        enclosing_method = next(
+                            (m for m in method_scopes if m["start_line"] <= call_line <= m["end_line"]),
+                            None,
+                        )
+
+                        class_id = f"{package_name}.{current_class}" if package_name else (current_class or "UnknownClass")
+                        source_id = enclosing_method["method_id"] if enclosing_method else class_id
+
+                        # 仅为实际发生调用的实体挂载关系边
                         relationships.append(
                             CodeRelationshipEdge(
-                                source_entity_id=src_id,
+                                source_entity_id=source_id,
                                 relationship_type=rel_type,
-                                target_entity_id=target_id,
+                                target_entity_id=resolved_target_id,
                                 confidence="strongly_inferred",
                                 evidence=CodeEvidence(
                                     file_path=rel_path,
-                                    start_line=content[:match.start()].count("\n") + 1,
+                                    start_line=call_line,
                                     snippet=match.group(0),
                                 ),
                                 metadata={"target_method": called_method},
                             )
                         )
-                        # 也为同名的特定 method 实体加上边
-                        for ent in entities:
-                            if ent.entity_id.startswith(src_id) and ent.entity_type in ("controller", "service"):
-                                relationships.append(
-                                    CodeRelationshipEdge(
-                                        source_entity_id=ent.entity_id,
-                                        relationship_type=rel_type,
-                                        target_entity_id=target_id,
-                                        confidence="strongly_inferred",
-                                    )
-                                )
 
             except Exception:
                 continue
 
         return ScannerResult(entities=entities, relationships=relationships)
+
