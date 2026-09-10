@@ -131,12 +131,23 @@ def init_agent_engine(config: IROConfig) -> GlmClient:
     client.register_tool_handler("code_trace_api_to_table", _trace_api)
     client.register_tool_handler("code_find_table_usage", _table_usage)
     client.register_tool_handler("project_lookup", lambda query: lookup_engine.lookup(query))
+    client.register_tool_handler("config_lookup", lambda query, limit=5: lookup_engine.config_lookup(query, limit=limit))
+    client.register_tool_handler("flow_lookup", lambda query, limit=3: lookup_engine.flow_lookup(query, limit=limit))
+    client.register_tool_handler("module_lookup", lambda query: lookup_engine.module_lookup(query))
+
+    from iro_agent.memory.learning_store import LearningMemoryStore
+    learning_store = LearningMemoryStore()
+    client.register_tool_handler("learning_save", lambda **kwargs: learning_store.save_rule(kwargs))
+    client.register_tool_handler("learning_recall", lambda query, limit=5: learning_store.recall_rules(query, limit=limit))
+    client.register_tool_handler("learning_list", lambda topic=None, status="active": learning_store.list_rules(topic=topic, status=status))
+
     client.register_tool_handler("db_list_tables", lambda: db_reader.list_tables())
     client.register_tool_handler("db_describe_table", lambda table_name: db_reader.describe_table(table_name))
     client.register_tool_handler("db_query", lambda query, max_rows=20: db_reader.execute_query(query, max_rows=max_rows))
     client.register_tool_handler("diagnostic_pipeline", lambda symptom, log_keyword=None, user_message_time=None: orchestrator.run_pipeline(symptom=symptom, log_keyword=log_keyword, user_message_time=user_message_time))
 
     return client
+
 
 
 def cmd_doctor(args):
@@ -252,6 +263,11 @@ def cmd_chat(args):
     print("  提示: 输入故障疑问 (如 '为什么今天系统卡住了？')，输入 'exit' 退出")
     print("==================================================")
 
+    from iro_agent.memory.learning_store import LearningMemoryStore
+    from iro_agent.memory.correction_detector import CorrectionDetector
+    from iro_agent.router.intent_router import IntentRouter
+
+    learning_store = LearningMemoryStore()
     memory_store = IncidentStore()
     history = []
 
@@ -270,7 +286,40 @@ def cmd_chat(args):
             if extracted_img:
                 print(f"[已识别现场截图]: {extracted_img}")
 
-            history.append({"role": "user", "content": clean_prompt})
+            # 1. 纠错与显式记忆指示拦截检测 (落实记忆诚实原则)
+            correction = CorrectionDetector.detect(clean_prompt)
+            if correction:
+                try:
+                    rule_id = learning_store.save_rule({
+                        "project": config.project_name,
+                        "rule_type": correction["rule_type"],
+                        "topic": correction["topic"],
+                        "rule_text": correction["rule_text"],
+                        "reason": correction["reason"],
+                        "source_type": "user_correction",
+                        "confidence": "confirmed",
+                    })
+                    reply = CorrectionDetector.format_honesty_response(rule_id=rule_id, rule_text=correction["rule_text"])
+                except Exception as e:
+                    reply = CorrectionDetector.format_honesty_response(rule_id=None, rule_text=correction["rule_text"], error=str(e))
+
+                print(f"\n[大模型诊断回复]:\n{reply}")
+                history.append({"role": "user", "content": clean_prompt})
+                history.append({"role": "assistant", "content": reply})
+                continue
+
+            # 2. 查询意图识别与前置学习记忆召回
+            intent_res = IntentRouter.route(clean_prompt)
+            print(f"[意图路由] 判定为: {intent_res['intent'].value} (置信度: {intent_res['confidence']:.2f}) | {intent_res['execution_strategy']}")
+
+            recalled_rules = learning_store.recall_rules(clean_prompt, project=config.project_name, limit=3)
+            prompt_to_send = clean_prompt
+            if recalled_rules:
+                rules_str = "\n".join(f"- {r['rule_text']} (领域: {r['topic']}, 依据: {r['reason']})" for r in recalled_rules)
+                print(f"[前置记忆召回] 命中 {len(recalled_rules)} 条历史学习规则，已作为最高准则注入本次排查")
+                prompt_to_send = f"【历史已确认学习规则提示（排查必须严格遵守此原则）】:\n{rules_str}\n\n现场提问: {clean_prompt}"
+
+            history.append({"role": "user", "content": prompt_to_send})
             print("\n正在查询诊断...")
 
             reply = engine.chat_completion(history, image_path=img_to_use, verbose=True)
@@ -282,6 +331,7 @@ def cmd_chat(args):
 
         except (KeyboardInterrupt, EOFError):
             print("\n退出诊断控制台。")
+
             break
         except Exception as e:
             print(f"\n[诊断异常] {e}")

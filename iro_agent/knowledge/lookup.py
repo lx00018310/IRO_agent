@@ -171,3 +171,73 @@ class ProjectLookupEngine:
             "warnings": warnings,
             "code_relationships": code_relationships,
         }
+
+    def config_lookup(self, query: str, limit: int = 5) -> Dict[str, Any]:
+        """依据自然语言或配置关键字在 ConfigCatalog 中检索配置项与生效规则"""
+        blueprint = self.store.load_blueprint()
+        if not blueprint or not blueprint.config_catalog:
+            return {
+                "status": "NOT_FOUND",
+                "message": "尚未建立配置目录索引，请先运行 iro-agent init 初始化项目认知。",
+                "items": [],
+                "priority_rules": [],
+            }
+
+        from iro_agent.knowledge.config_catalog import search_config_catalog
+        items = search_config_catalog(blueprint.config_catalog, query=query, limit=limit)
+        rules = [r.model_dump() for r in blueprint.config_priority_rules]
+
+        return {
+            "status": "SUCCESS" if items else "NO_MATCH",
+            "query": query,
+            "items": items,
+            "priority_rules": rules,
+        }
+
+    def flow_lookup(self, query: str, limit: int = 3) -> Dict[str, Any]:
+        """依据业务场景提问检索端到端核心业务流"""
+        blueprint = self.store.load_blueprint()
+        if not blueprint or not blueprint.business_flows:
+            return {"status": "NOT_FOUND", "message": "尚未建立业务流程模型", "flows": []}
+
+        q = query.lower()
+        matched = []
+        for flow in blueprint.business_flows:
+            score = 0
+            if flow.name.lower() in q or q in flow.name.lower():
+                score += 50
+            if any(a.lower() in q for a in flow.aliases):
+                score += 40
+            if any(t.lower() in q for t in flow.tables):
+                score += 30
+            if any(c.lower() in q for c in flow.configs):
+                score += 20
+            if score > 0:
+                matched.append((score, flow.model_dump()))
+
+        matched.sort(key=lambda x: x[0], reverse=True)
+        return {
+            "status": "SUCCESS" if matched else "NO_MATCH",
+            "query": query,
+            "flows": [m[1] for m in matched[:limit]],
+        }
+
+    def module_lookup(self, query: str) -> Dict[str, Any]:
+        """检索系统模块角色与入口架构"""
+        blueprint = self.store.load_blueprint()
+        if not blueprint:
+            return {"status": "NOT_FOUND", "modules": []}
+
+        q = query.lower()
+        matched_mods = []
+        for m in blueprint.modules:
+            if m.name.lower() in q or q in m.name.lower() or m.business_role.lower() in q:
+                matched_mods.append(m.model_dump())
+
+        overview_dict = blueprint.project_overview.model_dump() if blueprint.project_overview else {}
+        return {
+            "status": "SUCCESS",
+            "modules": matched_mods or [m.model_dump() for m in blueprint.modules[:5]],
+            "overview": overview_dict,
+        }
+

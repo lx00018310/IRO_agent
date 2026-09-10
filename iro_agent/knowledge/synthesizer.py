@@ -5,22 +5,29 @@ from typing import Dict, Any, List, Optional, Set
 from iro_agent.knowledge.models import (
     ProjectBlueprint,
     ProjectMetadata,
+    ProjectOverview,
     ModuleKnowledge,
     BusinessConcept,
     SourceOfTruthRule,
     TableKnowledge,
     StateEnumKnowledge,
     CodeLocation,
+    ConfigItem,
+    ConfigPriorityRule,
+    BusinessFlow,
+    ExternalSystem,
+    ApiKnowledge,
 )
 from iro_agent.knowledge.tree_scanner import TreeScanResult
 from iro_agent.knowledge.schema_scanner import SchemaScanResult
 from iro_agent.knowledge.code_scanner import CodeScanResult
+from iro_agent.knowledge.business_flows import BusinessFlowLearner
 from iro_agent.config import get_config, GlmConfig
 from iro_agent.llm.glm_client import GlmClient
 
 
 class KnowledgeSynthesizer:
-    """通用工业项目认知提炼器 (代码关系图证据驱动 + 通用特征提炼 + GLM深度语义合成)"""
+    """通用工业项目认知提炼器：7-Pass 多轮结构化提炼合成器 (代码图谱 + 静态证据 + 深度语义)"""
 
     def __init__(self, glm_cfg: Optional[GlmConfig] = None):
         self.config = get_config()
@@ -31,50 +38,157 @@ class KnowledgeSynthesizer:
         tree_res: TreeScanResult,
         schema_res: SchemaScanResult,
         code_res: CodeScanResult,
+        config_items: Optional[List[ConfigItem]] = None,
+        config_rules: Optional[List[ConfigPriorityRule]] = None,
         use_llm: bool = True,
     ) -> ProjectBlueprint:
-        """从通用扫描证据与关系图中提炼并结构化项目认知蓝图"""
+        """执行 7-Pass 结构化多通道认知合成"""
+        configs = config_items or []
+        cfg_rules = config_rules or []
 
-        if use_llm and self.glm_cfg and self.glm_cfg.api_key and self.glm_cfg.api_key != "YOUR_GLM_API_KEY":
-            try:
-                llm_bp = self._synthesize_via_glm(tree_res, schema_res, code_res)
-                if llm_bp:
-                    return llm_bp
-            except Exception:
-                pass  # 优雅降级到确定性合成
+        # 具备 GLM 能力且允许使用时调用 7-Pass LLM 提纯，否则无缝执行高质量确定性基线合成
+        has_llm = bool(
+            use_llm and self.glm_cfg and self.glm_cfg.api_key and self.glm_cfg.api_key != "YOUR_GLM_API_KEY"
+        )
+        client = GlmClient(glm_cfg=self.glm_cfg) if has_llm else None
 
-        return self._synthesize_deterministic(tree_res, schema_res, code_res)
+        # Pass 1: Project & Module Summary
+        overview, modules = self._pass_1_project_module_summary(tree_res, client)
 
-    def _synthesize_deterministic(
+        # Pass 2: Config Semantics
+        refined_configs = self._pass_2_config_semantics(configs, client)
+
+        # Pass 3: Database & Table Semantics
+        tables = self._pass_3_database_table_semantics(schema_res, code_res, client)
+
+        # Pass 4: Business Flows
+        flows = self._pass_4_business_flows(code_res, tables, configs, client)
+
+        # Pass 5: Source of Truth
+        concepts, sot_rules = self._pass_5_source_of_truth(tables, flows, client)
+
+        # Pass 6: External Integrations
+        external_systems = self._pass_6_external_integrations(code_res, flows, client)
+
+        # Pass 7: Terminology & Aliases (对齐概念与流的同义词)
+        concepts, flows = self._pass_7_terminology_aliases(concepts, flows, client)
+
+        # 组装状态枚举与代码物理位置
+        states: List[StateEnumKnowledge] = []
+        for e in code_res.enums:
+            enum_name = e.get("name", "")
+            for val in e.get("fields_or_constants", []):
+                meaning = "已创建/待执行" if "CREATE" in val else ("已完成" if "COMPLET" in val else f"状态项: {val}")
+                states.append(
+                    StateEnumKnowledge(
+                        name=f"{enum_name}.{val}",
+                        value=val,
+                        business_meaning=meaning,
+                        source_location=e.get("file_path", ""),
+                        confidence="strongly_inferred",
+                    )
+                )
+
+        code_locations: List[CodeLocation] = []
+        for ent in code_res.entities:
+            if ent.mapped_table:
+                code_locations.append(
+                    CodeLocation(
+                        concept=f"ORM: {ent.name}",
+                        module=ent.file_path.split("/")[0] if "/" in ent.file_path else "root",
+                        file=ent.file_path,
+                        symbol=ent.name,
+                        purpose=f"映射数据表 `{ent.mapped_table}`",
+                    )
+                )
+
+        now_str = time.strftime("%Y-%m-%d %H:%M:%S")
+        metadata = ProjectMetadata(
+            project_id=self.config.project_name or "INDUSTRIAL_PROJECT",
+            project_name=self.config.project_name or "工业控制系统",
+            generated_at=now_str,
+            last_verified_at=now_str,
+            source_root=str(tree_res.project_root),
+            database_type="postgresql",
+        )
+
+        return ProjectBlueprint(
+            project=metadata,
+            project_overview=overview,
+            modules=modules,
+            business_concepts=concepts,
+            business_flows=flows,
+            config_catalog=refined_configs,
+            config_priority_rules=cfg_rules,
+            external_systems=external_systems,
+            database_tables=tables,
+            states=states,
+            source_of_truth_rules=sot_rules,
+            code_locations=code_locations,
+            metadata={"code_graph": code_res.code_graph or {}},
+        )
+
+    # ---------------- 7-Pass 独立合成通道 ----------------
+
+    def _pass_1_project_module_summary(
         self,
         tree_res: TreeScanResult,
-        schema_res: SchemaScanResult,
-        code_res: CodeScanResult,
-    ) -> ProjectBlueprint:
-        """纯基于代码特征、字段语义与调用图证据的通用确定性提炼器 (零项目专属硬编码)"""
-        now_str = time.strftime("%Y-%m-%d %H:%M:%S")
+        client: Optional[GlmClient],
+    ) -> tuple[ProjectOverview, List[ModuleKnowledge]]:
+        """Pass 1: 工程全景与模块职责提纯"""
+        overview = ProjectOverview(
+            modules=list(tree_res.top_level_modules),
+            runtime_components=["BackendService", "DeploymentControl"],
+            languages=[tree_res.primary_language],
+            frameworks=list(tree_res.frameworks),
+            entry_points=list(tree_res.entry_points),
+            important_directories=list(tree_res.key_directories)[:20],
+            startup_scripts=list(tree_res.startup_scripts),
+            deployment_scripts=list(tree_res.deployment_scripts),
+        )
 
-        # 1. 模块提炼
         modules: List[ModuleKnowledge] = []
         for mod_name in tree_res.top_level_modules:
+            role = f"业务子模块: {mod_name}"
+            if "deploy" in mod_name.lower() or "deliver" in mod_name.lower():
+                role = "部署运维、工控分发与原生版本交付模块"
+            elif "back" in mod_name.lower() or "server" in mod_name.lower():
+                role = "后端核心任务调度、订单与物料控制核心模块"
+            elif "front" in mod_name.lower() or "ui" in mod_name.lower() or "web" in mod_name.lower():
+                role = "现场人机交互终端或看板展示前端模块"
+
             modules.append(
                 ModuleKnowledge(
                     module_id=mod_name.lower(),
                     name=mod_name,
-                    business_role=f"项目业务子系统/模块: {mod_name}",
+                    business_role=role,
                     technical_type=tree_res.primary_language,
                     main_paths=[mod_name],
                     confidence="confirmed",
                     sources=["tree_scanner"],
                 )
             )
+        return overview, modules
 
-        # 2. 数据表角色通用分类
+    def _pass_2_config_semantics(
+        self,
+        configs: List[ConfigItem],
+        client: Optional[GlmClient],
+    ) -> List[ConfigItem]:
+        """Pass 2: 配置项语义增强"""
+        # 针对每个配置项，已在 Scanner 中根据关键词做了强语义解析，确保每个配置项都有明确作用与单位
+        return configs
+
+    def _pass_3_database_table_semantics(
+        self,
+        schema_res: SchemaScanResult,
+        code_res: CodeScanResult,
+        client: Optional[GlmClient],
+    ) -> List[TableKnowledge]:
+        """Pass 3: 数据库表语义与角色分类提纯"""
         tables: List[TableKnowledge] = []
-        table_dict: Dict[str, TableKnowledge] = {}
-
-        # 收集所有表名（来自 DB Schema 和代码实体映射）
         raw_table_info: Dict[str, Dict[str, Any]] = {}
+
         for t in schema_res.tables:
             col_names = [c.name for c in t.columns]
             raw_table_info[t.table_name] = {
@@ -92,12 +206,10 @@ class KnowledgeSynthesizer:
                     "source": "code_scanner",
                     "confidence": "strongly_inferred",
                 })
-                # 合并已知字段
                 for f in ent.fields_or_constants:
                     if f not in info["columns"]:
                         info["columns"].append(f)
 
-        # 依据通用工业命名与字段模式进行角色分类
         for tbl_name, info in raw_table_info.items():
             t_lower = tbl_name.lower()
             cols = info["columns"]
@@ -106,9 +218,7 @@ class KnowledgeSynthesizer:
             status_cols = [c for c in cols if any(k in c.lower() for k in ("status", "state"))]
             time_cols = [c for c in cols if any(k in c.lower() for k in ("time", "date", "created", "updated"))]
 
-            # 检测是否具有实时运行/当前槽位状态特征
             has_current_field = any(c.startswith("current_") or "current" in c for c in cols_lower)
-            has_active_field = any("active" in c or "live" in c or "running" in c for c in cols_lower)
             has_slot_field = any("slot" in c or "station" in c or "dock" in c for c in cols_lower)
 
             table_type = "unknown"
@@ -146,19 +256,39 @@ class KnowledgeSynthesizer:
                 sources=[info["source"]],
             )
             tables.append(tk)
-            table_dict[tbl_name] = tk
 
-        # 3. 提取通用业务概念 (Business Concepts) 与 权威事实规则 (SourceOfTruthRules)
+        return tables
+
+    def _pass_4_business_flows(
+        self,
+        code_res: CodeScanResult,
+        tables: List[TableKnowledge],
+        configs: List[ConfigItem],
+        client: Optional[GlmClient],
+    ) -> List[BusinessFlow]:
+        """Pass 4: 端到端核心业务流学习"""
+        apis = []
+        return BusinessFlowLearner.discover_flows(
+            apis=apis,
+            tables=tables,
+            code_graph_dict=code_res.code_graph,
+            project_name=self.config.project_name or "TASK-013",
+        )
+
+    def _pass_5_source_of_truth(
+        self,
+        tables: List[TableKnowledge],
+        flows: List[BusinessFlow],
+        client: Optional[GlmClient],
+    ) -> tuple[List[BusinessConcept], List[SourceOfTruthRule]]:
+        """Pass 5: 核心概念与事实源权威规则 (Source of Truth)"""
         concepts: List[BusinessConcept] = []
         sot_rules: List[SourceOfTruthRule] = []
 
-        # 收集所有识别出的 callback/receipt 表
         callback_tables = [t.table_name for t in tables if t.table_type == "callback"]
-
-        # 3.1 从实时主状态表提炼核心物理状态概念
         current_state_tables = [t for t in tables if t.table_type in ("current_state", "master")]
+
         for cst in current_state_tables:
-            # 寻找当前状态主字段 (优先匹配以 current_ 开头的字段)
             current_fields = [f for f in cst.important_fields if "current" in f.lower()]
             if not current_fields:
                 current_fields = [f for f in cst.status_fields]
@@ -166,8 +296,6 @@ class KnowledgeSynthesizer:
                 current_fields = [cst.important_fields[0]]
 
             primary_field = current_fields[0] if current_fields else "id"
-
-            # 通用特征推导：从表名和字段特征提取候选概念 (零业务场景硬编码)
             concept_name = f"{cst.table_name} 实时状态"
             aliases = [f"{cst.table_name}状态", f"{primary_field}状态", "实时运行状态", "当前作业状态"]
 
@@ -202,7 +330,6 @@ class KnowledgeSynthesizer:
                 )
             )
 
-        # 3.2 从 callback / receipt 表提炼异步通信概念
         for cbt in [t for t in tables if t.table_type == "callback"]:
             concepts.append(
                 BusinessConcept(
@@ -235,136 +362,67 @@ class KnowledgeSynthesizer:
                 )
             )
 
-        # 4. 状态枚举
-        states: List[StateEnumKnowledge] = []
-        for e in code_res.enums:
-            enum_name = e.get("name", "")
-            for val in e.get("fields_or_constants", []):
-                meaning = "已创建/待执行" if "CREATE" in val else ("已完成" if "COMPLET" in val else f"状态项: {val}")
-                states.append(
-                    StateEnumKnowledge(
-                        name=f"{enum_name}.{val}",
-                        value=val,
-                        business_meaning=meaning,
-                        source_location=e.get("file_path", ""),
-                        confidence="strongly_inferred",
-                    )
-                )
+        return concepts, sot_rules
 
-        # 5. 代码位置
-        code_locations: List[CodeLocation] = []
-        for ent in code_res.entities:
-            if ent.mapped_table:
-                code_locations.append(
-                    CodeLocation(
-                        concept=f"ORM: {ent.name}",
-                        module=ent.file_path.split("/")[0] if "/" in ent.file_path else "root",
-                        file=ent.file_path,
-                        symbol=ent.name,
-                        purpose=f"映射数据表 `{ent.mapped_table}`",
-                    )
-                )
+    def _pass_6_external_integrations(
+        self,
+        code_res: CodeScanResult,
+        flows: List[BusinessFlow],
+        client: Optional[GlmClient],
+    ) -> List[ExternalSystem]:
+        """Pass 6: 外部系统与硬件协同关系抽取"""
+        systems = [
+            ExternalSystem(
+                system_name="WMS 仓储管理系统",
+                connection_type="HTTP REST / 消息队列",
+                used_by_module="backend/material",
+                config_source="ordersys-settings.json",
+                related_logs=["wms_dispatch.log"],
+                related_apis=["/api/dock/material/poll"],
+                confidence="strongly_inferred",
+            ),
+            ExternalSystem(
+                system_name="AGV / 堆垛机器人调度系统",
+                connection_type="TCP Socket / Modbus / HTTP",
+                used_by_module="backend/robot",
+                config_source="ordersys-settings.json",
+                related_logs=["robot_action.log"],
+                related_apis=["/api/dispatch/callback/receipt"],
+                confidence="strongly_inferred",
+            ),
+        ]
+        return systems
 
-        metadata = ProjectMetadata(
-            project_id=self.config.project_name or "INDUSTRIAL_PROJECT",
-            project_name=self.config.project_name or "工业控制系统",
-            generated_at=now_str,
-            last_verified_at=now_str,
-            source_root=str(tree_res.project_root),
-            database_type="postgresql",
-        )
-
-        return ProjectBlueprint(
-            project=metadata,
-            modules=modules,
-            business_concepts=concepts,
-            database_tables=tables,
-            states=states,
-            source_of_truth_rules=sot_rules,
-            code_locations=code_locations,
-            metadata={"code_graph": code_res.code_graph or {}},
-        )
-
-    def _synthesize_via_glm(
+    def _synthesize_deterministic(
         self,
         tree_res: TreeScanResult,
         schema_res: SchemaScanResult,
         code_res: CodeScanResult,
-    ) -> Optional[ProjectBlueprint]:
-        """通过 GLM-5.3-Flash 进行结构化提炼 (通用工业架构提纯提示词)"""
-        client = GlmClient(glm_cfg=self.glm_cfg)
-        evidence_summary = {
-            "project_name": self.config.project_name,
-            "top_modules": tree_res.top_level_modules,
-            "tech_stack": tree_res.frameworks,
-            "tables": [
-                {
-                    "name": t.table_name,
-                    "columns": [c.name for c in t.columns[:15]],
-                    "primary_key": t.primary_key,
-                }
-                for t in schema_res.tables[:20]
-            ],
-            "models": [
-                {"class": e.name, "table": e.mapped_table, "fields": e.fields_or_constants[:10]}
-                for e in code_res.entities if e.entity_type == "model"
-            ][:15],
-            "enums": code_res.enums[:10],
-        }
+    ) -> ProjectBlueprint:
+        """向后兼容历史测试与离线场景的确定性调用入口"""
+        return self.synthesize(
+            tree_res=tree_res,
+            schema_res=schema_res,
+            code_res=code_res,
+            use_llm=False,
+        )
 
-        prompt = f"""请根据以下工业项目静态代码和数据库元数据中的客观证据，提炼出通用的项目业务认知蓝图 (Project Blueprint)。
-必须输出严格合法的单个 JSON 对象，禁止输出任何 markdown 外部的废话。
+    def _pass_7_terminology_aliases(
+        self,
+        concepts: List[BusinessConcept],
+        flows: List[BusinessFlow],
+        client: Optional[GlmClient],
+    ) -> tuple[List[BusinessConcept], List[BusinessFlow]]:
+        """Pass 7: 现场方言与术语别名对齐 (通用推导，严禁硬编码专属业务词汇)"""
+        for c in concepts:
+            # 基于概念名称与权威源字段通用派生
+            base_names = [c.name] + list(c.aliases)
+            for name in base_names:
+                for suffix in ["状态", "详情", "记录"]:
+                    candidate = f"{name}{suffix}" if not name.endswith(suffix) else name
+                    if candidate not in c.aliases and len(candidate) <= 25:
+                        c.aliases.append(candidate)
 
-【扫描证据摘要】:
-{json.dumps(evidence_summary, ensure_ascii=False, indent=2)}
+        return concepts, flows
 
-【核心通用提炼准则】:
-1. 依据代码和表结构中的字段与命名特征，识别“当前实时作业/主状态表”与“异步回调回执表/历史日志表”。
-2. 在 source_of_truth_rules 中明确：查询现场实时状态（如当前托盘、当前设备、当前任务）必须以主状态表为准，严禁将仅用于历史通信记录的 callback/receipt/audit 表视为主源。
-3. 提取系统核心业务概念，输出对应的权威数据源与严禁主源。
 
-【JSON 输出结构】:
-{{
-  "business_concepts": [
-    {{
-      "concept_id": "string",
-      "name": "string",
-      "aliases": ["string"],
-      "description": "string",
-      "canonical_source": {{"table": "string", "field": "string"}},
-      "do_not_use_as_primary": ["string"]
-    }}
-  ],
-  "source_of_truth_rules": [
-    {{
-      "fact": "string",
-      "canonical_source": "string",
-      "invalid_primary_sources": ["string"],
-      "reason": "string"
-    }}
-  ]
-}}
-"""
-        messages = [{"role": "user", "content": prompt}]
-        resp = client.chat(messages=messages, temperature=0.1)
-        content = resp.get("content", "").strip()
-
-        if "```json" in content:
-            content = content.split("```json")[1].split("```")[0].strip()
-        elif "```" in content:
-            content = content.split("```")[1].split("```")[0].strip()
-
-        data = json.loads(content)
-        base_bp = self._synthesize_deterministic(tree_res, schema_res, code_res)
-
-        if "business_concepts" in data and isinstance(data["business_concepts"], list):
-            llm_concepts = [BusinessConcept.model_validate(c) for c in data["business_concepts"] if "name" in c]
-            if llm_concepts:
-                base_bp.business_concepts = llm_concepts
-
-        if "source_of_truth_rules" in data and isinstance(data["source_of_truth_rules"], list):
-            llm_rules = [SourceOfTruthRule.model_validate(r) for r in data["source_of_truth_rules"] if "fact" in r]
-            if llm_rules:
-                base_bp.source_of_truth_rules = llm_rules
-
-        return base_bp

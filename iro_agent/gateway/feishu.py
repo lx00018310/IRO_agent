@@ -319,10 +319,43 @@ class FeishuGateway(GatewayAdapter):
         # 立即添加 OK 表情反应，向用户确认消息已接收并正在处理 (类似 Hermes)
         self.add_reaction(message_id=msg.message_id, emoji_type="OK")
 
+        # 0. 纠错与显式记忆指示拦截 (落实记忆诚实原则)
+        from iro_agent.memory.correction_detector import CorrectionDetector
+        from iro_agent.memory.learning_store import LearningMemoryStore
+        from iro_agent.router.intent_router import IntentRouter
+
+        learning_store = LearningMemoryStore()
+        correction = CorrectionDetector.detect(prompt_content)
+        if correction:
+            try:
+                rule_id = learning_store.save_rule({
+                    "project": self.config.project_name,
+                    "rule_type": correction["rule_type"],
+                    "topic": correction["topic"],
+                    "rule_text": correction["rule_text"],
+                    "reason": correction["reason"],
+                    "source_type": "user_correction",
+                    "confidence": "confirmed",
+                })
+                reply_text = CorrectionDetector.format_honesty_response(rule_id=rule_id, rule_text=correction["rule_text"])
+            except Exception as e:
+                reply_text = CorrectionDetector.format_honesty_response(rule_id=None, rule_text=correction["rule_text"], error=str(e))
+
+            safe_reply = redact_secrets(reply_text)
+            self.send_message(chat_id=msg.chat_id, text=safe_reply, reply_to_message_id=msg.message_id)
+            self.dedup.mark_completed(event_id=msg.event_id, message_id=msg.message_id)
+            return
+
         try:
-            # 维护上下文会话
+            # 维护上下文会话并注入前置规则
+            recalled_rules = learning_store.recall_rules(prompt_content, project=self.config.project_name, limit=3)
+            prompt_to_send = prompt_content
+            if recalled_rules:
+                rules_str = "\n".join(f"- {r['rule_text']} (领域: {r['topic']}, 依据: {r['reason']})" for r in recalled_rules)
+                prompt_to_send = f"【历史已确认学习规则提示（排查必须严格遵守此原则）】:\n{rules_str}\n\n现场提问: {prompt_content}"
+
             history = self.session_history.setdefault(session_id, [])
-            history.append({"role": "user", "content": prompt_content})
+            history.append({"role": "user", "content": prompt_to_send})
 
             reply_text = "收到请求，正在诊断中..."
             if self.glm_client:
@@ -332,6 +365,7 @@ class FeishuGateway(GatewayAdapter):
 
             # 4. 敏感凭据脱敏与回送
             safe_reply = redact_secrets(reply_text)
+
             print(f"[飞书回复] 正在向飞书回送诊断报告 (chat_id={msg.chat_id})...")
             send_ok = self.send_message(chat_id=msg.chat_id, text=safe_reply, reply_to_message_id=msg.message_id)
 

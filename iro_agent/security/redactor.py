@@ -38,3 +38,12 @@ def redact_secrets(text: str) -> str:
         pass
 
     return result
+
+
+class SecretRedactor:
+    """敏感信息脱敏器封装"""
+
+    @staticmethod
+    def redact(text: str) -> str:
+        return redact_secrets(text)
+

@@ -171,8 +171,42 @@ class ProjectKnowledgeStore:
             paths = "<br>".join(m.main_paths)
             lines.append(f"| {m.name} | {m.business_role} | `{m.technical_type}` | `{paths}` |")
 
+        if bp.config_catalog:
+            lines.extend([
+                "",
+                "## 5. 配置全目录认知 (Config Catalog 核心样例)",
+                "| 配置键 (Key) | 配置文件 | 脱敏默认值 | 语义与作用 | 单位 |",
+                "|---|---|---|---|---|",
+            ])
+            for c in bp.config_catalog[:30]:
+                lines.append(f"| `{c.key}` | `{c.relative_path}` | `{c.default_value}` | {c.business_meaning} | {c.unit or '-'} |")
+
+        if bp.business_flows:
+            lines.extend([
+                "",
+                "## 6. 端到端核心业务链路 (Business Flows)",
+                "| 业务流程名称 | 入口 API / 控制器 | 涉及服务与组件 | 核心写入/读取数据表 | 权威依据 |",
+                "|---|---|---|---|---|",
+            ])
+            for f in bp.business_flows:
+                services = ", ".join(f.services) or f.controller
+                tbls = ", ".join(f.tables) or "-"
+                lines.append(f"| {f.name} | `{f.entry_api or f.controller}` | {services} | {tbls} | `{f.source_of_truth}` |")
+
+        if bp.external_systems:
+            lines.extend([
+                "",
+                "## 7. 外部依赖与协同系统 (External Systems)",
+                "| 系统名称 | 连接协议/方式 | 调用模块 | 关联日志/接口 |",
+                "|---|---|---|---|",
+            ])
+            for ext in bp.external_systems:
+                apis = ", ".join(ext.related_apis) or "-"
+                lines.append(f"| {ext.system_name} | `{ext.connection_type}` | {ext.used_by_module} | {apis} |")
+
         with open(self.markdown_path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
+
 
     def get_concept(self, query: str) -> Optional[BusinessConcept]:
         bp = self.load_blueprint()

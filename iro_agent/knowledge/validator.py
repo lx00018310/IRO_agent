@@ -1,6 +1,8 @@
 import json
 import re
+from pathlib import Path
 from typing import List, Tuple, Optional
+
 from iro_agent.knowledge.models import ProjectBlueprint
 from iro_agent.knowledge.schema_scanner import SchemaScanResult
 from iro_agent.knowledge.code_scanner import CodeScanResult
@@ -104,10 +106,25 @@ class BlueprintValidator:
 
             blueprint.metadata["code_graph"] = clean_graph.to_dict()
 
-        # 4. 敏感数据安全巡检
+        # 4. 校验配置目录 (Config Catalog) 真实存在性
+        for cfg in blueprint.config_catalog:
+            cfg_p = Path(cfg.file_path)
+            if not cfg_p.exists():
+                warnings.append(f"配置项 '{cfg.key}' 来源文件 '{cfg.file_path}' 在磁盘上不存在，置信度降级")
+                cfg.confidence = "inferred"
+
+        # 5. 校验业务流程 (Business Flows) 支撑要素
+        for flow in blueprint.business_flows:
+            missing_tables = [t for t in flow.tables if valid_tables and t.lower() not in valid_tables]
+            if missing_tables:
+                warnings.append(f"业务流 '{flow.name}' 引用了未经验证的数据表 {missing_tables}，置信度降级为 inferred")
+                flow.confidence = "inferred"
+
+        # 6. 敏感数据安全巡检
         raw_json = json.dumps(blueprint.model_dump(), ensure_ascii=False)
         for pat in self.SENSITIVE_PATTERNS:
             if pat.search(raw_json):
                 warnings.append("检测到蓝图中可能存在未脱敏的凭据字符串，已触发安全关注")
 
         return blueprint, warnings
+

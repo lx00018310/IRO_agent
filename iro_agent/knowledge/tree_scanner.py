@@ -12,6 +12,9 @@ class TreeScanResult(BaseModel):
     frameworks: List[str] = Field(default_factory=list)
     top_level_modules: List[str] = Field(default_factory=list)
     key_directories: List[str] = Field(default_factory=list)
+    startup_scripts: List[str] = Field(default_factory=list)
+    deployment_scripts: List[str] = Field(default_factory=list)
+    entry_points: List[str] = Field(default_factory=list)
 
 
 class TreeScanner:
@@ -33,6 +36,9 @@ class TreeScanner:
         ext_counts: Dict[str, int] = {}
         top_modules: List[str] = []
         key_dirs: List[str] = []
+        startup_scripts: List[str] = []
+        deployment_scripts: List[str] = []
+        entry_points: List[str] = []
         frameworks: Set[str] = set()
         total_files = 0
 
@@ -67,13 +73,29 @@ class TreeScanner:
                     ext_counts[suffix] = ext_counts.get(suffix, 0) + 1
 
                 fname_lower = file_name.lower()
-                # 技术栈特征识别
+                rel_f_str = (rel_path / file_name).as_posix() if str(rel_path) != "." else file_name
+
+                # 识别启动与部署脚本
+                if fname_lower.endswith((".bat", ".cmd", ".sh", ".ps1")):
+                    if any(k in fname_lower for k in ["start", "run", "launch", "boot", "server"]):
+                        startup_scripts.append(rel_f_str)
+                    elif any(k in fname_lower for k in ["deploy", "install", "build", "release"]):
+                        deployment_scripts.append(rel_f_str)
+                elif "dockerfile" in fname_lower or "docker-compose" in fname_lower:
+                    deployment_scripts.append(rel_f_str)
+
+                # 技术栈特征识别与入口识别
                 if fname_lower == "pom.xml":
                     frameworks.add("Maven / Spring Boot")
                 elif fname_lower == "build.gradle":
                     frameworks.add("Gradle")
                 elif fname_lower == "manage.py":
                     frameworks.add("Django")
+                    entry_points.append(rel_f_str)
+                elif fname_lower == "main.py" or fname_lower == "app.py":
+                    entry_points.append(rel_f_str)
+                elif "application.java" in fname_lower:
+                    entry_points.append(rel_f_str)
                 elif fname_lower == "package.json":
                     frameworks.add("Node.js / Web")
                 elif fname_lower in ("requirements.txt", "pyproject.toml"):
@@ -100,4 +122,8 @@ class TreeScanner:
             frameworks=sorted(list(frameworks)),
             top_level_modules=sorted(top_modules),
             key_directories=sorted(key_dirs)[:30],
+            startup_scripts=sorted(startup_scripts),
+            deployment_scripts=sorted(deployment_scripts),
+            entry_points=sorted(entry_points),
         )
+
