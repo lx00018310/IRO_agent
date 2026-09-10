@@ -248,10 +248,10 @@ def cmd_chat(args):
             history.append({"role": "user", "content": clean_prompt})
             print("\n正在查询诊断...")
 
-            reply = engine.chat_completion(history, image_path=img_to_use)
+            reply = engine.chat_completion(history, image_path=img_to_use, verbose=True)
             history.append({"role": "assistant", "content": reply})
 
-            print(reply)
+            print(f"\n[大模型诊断回复]:\n{reply}")
 
             # 故障记忆由 DiagnosticOrchestrator 在诊断流水线中统一单点沉淀，CLI 仅负责呈现，杜绝重复记录
 

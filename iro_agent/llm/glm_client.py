@@ -32,6 +32,10 @@ SYSTEM_PROMPT = """你是工业现场只读智能诊断助手 IRO_agent。
    - 严禁任何客套铺垫（如“根据您提供的信息”、“经过调阅分析...”）。
    - 严禁列出系统各模块完好度清单（严禁逐项列出“PLC正常、发货正常...”）。
    - 严禁长篇大论，回答必须短小精悍、一针见血。
+
+5. 【数据库查询规范】：
+   - 查询“最新”业务/调度/任务数据时，必须根据时间字段或自增主键使用 ORDER BY ... DESC LIMIT N（如 ORDER BY id DESC 或 ORDER BY received_at DESC），严禁按默认无序或 ASC 获取历史旧记录。
+   - 关键业务表：ordersys_dock_task (月台调度总任务), ordersys_task_line (任务订单物料行), ordersys_dispatch_callback_receipt (调度实到回执), ordersys_audit_log (现场动作审计日志), ordersys_processed_callback (调度请求回调幂等记录)。
 """
 
 
@@ -181,6 +185,7 @@ class GlmClient:
         messages: List[Dict[str, Any]],
         image_path: Optional[str] = None,
         max_tool_rounds: int = 8,
+        verbose: bool = False,
     ) -> str:
         """执行多轮对话与工具调用循环"""
         # 脱敏所有用户输入
@@ -274,9 +279,18 @@ class GlmClient:
 
             # 执行模型请求的只读工具
             formatted_messages.append(message)
+            if verbose:
+                msg_thought = (message.get("content") or "").strip()
+                if msg_thought:
+                    print(f"\n[模型思考/意图说明]:\n{msg_thought}")
+
             for tc in tool_calls:
                 func_name = tc["function"]["name"]
                 args = json.loads(tc["function"]["arguments"])
+                if verbose:
+                    print(f"\n[工具调用 (Round {round_idx + 1})] -> {func_name}")
+                    print(f"  ├─ 入参: {json.dumps(args, ensure_ascii=False)}")
+
                 handler = self.tool_handlers.get(func_name)
                 if handler:
                     try:
@@ -287,6 +301,10 @@ class GlmClient:
                     tool_res = {"error": f"工具 {func_name} 未实现"}
 
                 tool_res_str = json.dumps(tool_res, ensure_ascii=False, default=str)
+                if verbose:
+                    preview = tool_res_str if len(tool_res_str) <= 1000 else tool_res_str[:1000] + f"... [已截断，共 {len(tool_res_str)} 字符]"
+                    print(f"  └─ 返回: {preview}")
+
                 if len(tool_res_str) > 1200:
                     tool_res_str = tool_res_str[:1200] + "...[已截断过长事实数据]"
 
