@@ -29,3 +29,7 @@ logs/
 # Local configuration
 config.local.json
 config.json
+
+# Local Knowledge & Blueprint Cache
+.iro_agent/
+

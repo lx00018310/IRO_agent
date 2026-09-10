@@ -23,6 +23,7 @@ if "%PYTHON_EXE%"=="" (
 if /i "%~1"=="chat" goto DO_CHAT
 if /i "%~1"=="gateway" goto DO_GATEWAY
 if /i "%~1"=="doctor" goto DO_DOCTOR
+if /i "%~1"=="init" goto DO_INIT
 if /i "%~1"=="test" goto DO_TEST
 if /i "%~1"=="config" goto DO_CONFIG
 
@@ -32,23 +33,29 @@ echo   [1] 交互式只读诊断对话 (CLI Chat) [默认]
 echo   [2] 飞书机器人网关服务 (Feishu Gateway)
 echo   [3] 工控机体检与安全体检 (Doctor Check)
 echo   [4] 运行自动化验证套件 (Pytest)
-echo   [5] 编辑配置文件 (记事本打开 config.json)
-echo   [6] 退出
+echo   [5] 初始化/更新项目认知 (Project Bootstrap)
+echo   [6] 编辑配置文件 (记事本打开 config.json)
+echo   [7] 退出
 echo.
 
 set "CHOICE=1"
-set /p "CHOICE=请输入选择 [1-6, 默认 1]: "
+set /p "CHOICE=请输入选择 [1-7, 默认 1]: "
 
 if "%CHOICE%"=="1" goto DO_CHAT
 if "%CHOICE%"=="2" goto DO_GATEWAY
 if "%CHOICE%"=="3" goto DO_DOCTOR
 if "%CHOICE%"=="4" goto DO_TEST
-if "%CHOICE%"=="5" goto DO_CONFIG
-if "%CHOICE%"=="6" goto DO_EXIT
+if "%CHOICE%"=="5" goto DO_INIT
+if "%CHOICE%"=="6" goto DO_CONFIG
+if "%CHOICE%"=="7" goto DO_EXIT
 
 echo [提示] 输入无效，请重新选择。
 echo.
 goto MENU
+
+:DO_INIT
+"%PYTHON_EXE%" -m iro_agent.cli init --refresh
+goto DO_PAUSE
 
 :DO_CONFIG
 if exist "config.json" (

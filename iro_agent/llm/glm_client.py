@@ -11,7 +11,7 @@ from iro_agent.security.audit import AuditLogger
 SYSTEM_PROMPT = """你是工业现场只读智能诊断助手 IRO_agent。
 
 【核心原则：极端精简，拒绝任何废话，直切要害】
-1. 【事实查询（查目录/版本/配置/位置/状态）】：
+1. 【事实查询（查目录/版本/配置/位置/状态/最新业务事实）】：
    - 仅用 1 句话直接回答事实本身（例如：“TASK-013 项目目录位于：D:\\当前工作\\维力智能设备\\TASK-013_武汉自动上车显示屏”）。
    - 严禁套用故障诊断格式，严禁输出任何“核心结论/关键依据/排查建议/业务影响”等标题。
 
@@ -23,19 +23,19 @@ SYSTEM_PROMPT = """你是工业现场只读智能诊断助手 IRO_agent。
 **排查建议**：（若有明确物理/配置排查动作则写1条，无必要则不写）
 - 建议1
 
-3. 【工具调用与时序分析指引】：
-   - 涉及发布记录、版本变更与日志异常时序比对（如“在发布之前还是之后发生”）时，优先调用 diagnostic_pipeline 一键获取完整时间线与时序判定。
-   - 核心完整性准则：时序上的先后承接关系并不等同于直接因果关系，客观陈述时间先后即可，严禁无据断言因果。
-   - 严禁盲目发起过多无用轮次，用最少且确凿的工具调用直接推导出答案。
+3. 【业务概念与权威数据源原则 (Source of Truth)】：
+   - 涉及工控业务事实（如“最新一托”、“调度信息”、“当前月台”、“回执确认”）查询时，**必须优先调用 project_lookup(query)** 获取项目的权威数据源（Source of Truth）和防踩坑告警。
+   - 依据 project_lookup 的指导确定权威主表，严禁将历史通信流水（如 callback_receipt）误用为当前月台实时物理状态的主源。
+   - 对表字段不确定时，可调用 db_describe_table(table_name) 探查字段类型，再发起精准的 db_query。
 
-4. 【禁止事项】：
-   - 严禁任何客套铺垫（如“根据您提供的信息”、“经过调阅分析...”）。
-   - 严禁列出系统各模块完好度清单（严禁逐项列出“PLC正常、发货正常...”）。
-   - 严禁长篇大论，回答必须短小精悍、一针见血。
+4. 【时序分析与数据新鲜度裁决】：
+   - 工业诊断必须以“当前最新时刻”为基准。
+   - 查询“最新”数据时，必须根据时间字段或自增主键使用 ORDER BY ... DESC LIMIT N（如 ORDER BY id DESC）。
+   - 若主状态表存在近期的有效状态，严禁将数天前的历史异步日志与当前状态混为一谈。
+   - 时序先后关系不等同于直接因果关系，客观陈述事实即可，严禁无据断言。
 
-5. 【数据库查询规范】：
-   - 查询“最新”业务/调度/任务数据时，必须根据时间字段或自增主键使用 ORDER BY ... DESC LIMIT N（如 ORDER BY id DESC 或 ORDER BY received_at DESC），严禁按默认无序或 ASC 获取历史旧记录。
-   - 关键业务表：ordersys_dock_task (月台调度总任务), ordersys_task_line (任务订单物料行), ordersys_dispatch_callback_receipt (调度实到回执), ordersys_audit_log (现场动作审计日志), ordersys_processed_callback (调度请求回调幂等记录)。
+5. 【禁止事项】：
+   - 严禁任何客套铺垫，严禁逐项列出完好度清单。
 """
 
 
@@ -151,8 +151,44 @@ class GlmClient:
             {
                 "type": "function",
                 "function": {
+                    "name": "project_lookup",
+                    "description": "检索当前项目的业务知识蓝图与权威事实源 (Source of Truth)。涉及业务概念（如最新一托、调度回执、月台任务等）或数据库查询前，优先调用此工具获取权威表和避坑告警",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "业务关键词或概念（如 '最新一托', '调度信息', '11号月台'）"},
+                        },
+                        "required": ["query"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "db_list_tables",
+                    "description": "只读列出当前数据库中所有可用的业务表名称",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "db_describe_table",
+                    "description": "只读查看指定数据表的列名、数据类型、主键与结构定义",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "table_name": {"type": "string", "description": "需要探查的数据表名"},
+                        },
+                        "required": ["table_name"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "db_query",
-                    "description": "安全只读执行数据库 SELECT 查询（自动拦截写操作与多语句，返回数据行字典列表）",
+                    "description": "安全只读执行数据库 SELECT 查询（自动拦截写操作与多语句，返回数据行字典列表）。在执行查询前，请先调用 project_lookup 明确权威主表",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -188,8 +224,11 @@ class GlmClient:
         verbose: bool = False,
     ) -> str:
         """执行多轮对话与工具调用循环"""
-        # 脱敏所有用户输入
-        formatted_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        # 脱敏所有用户输入并动态注入系统时间锚点
+        import time
+        current_time_str = time.strftime("%Y-%m-%d %H:%M:%S")
+        sys_content = f"{SYSTEM_PROMPT}\n【工控机当前时间锚点】: {current_time_str}\n"
+        formatted_messages = [{"role": "system", "content": sys_content}]
         for m in messages:
             content = m.get("content", "")
             if isinstance(content, str):

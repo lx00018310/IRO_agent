@@ -110,3 +110,77 @@ class DatabaseReader:
             return True
         except Exception:
             return False
+
+    def list_tables(self, schema: str = "public") -> List[str]:
+        """只读获取当前数据库用户基表名称列表"""
+        sql = """
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = %s AND table_type = 'BASE TABLE'
+        ORDER BY table_name;
+        """
+        rows = self.execute_query(sql, params=(schema,), max_rows=500)
+        return [r["table_name"] for r in rows]
+
+    def describe_table(self, table_name: str, schema: str = "public") -> List[Dict[str, Any]]:
+        """只读获取指定表的字段、类型、主键与是否允许为空"""
+        clean_tbl = table_name.strip().strip("'\"`")
+        sql = """
+        SELECT 
+            c.column_name,
+            c.data_type,
+            c.is_nullable,
+            c.column_default,
+            CASE WHEN tc.constraint_type = 'PRIMARY KEY' THEN true ELSE false END as is_primary_key
+        FROM information_schema.columns c
+        LEFT JOIN information_schema.key_column_usage kcu
+            ON c.table_schema = kcu.table_schema
+            AND c.table_name = kcu.table_name
+            AND c.column_name = kcu.column_name
+        LEFT JOIN information_schema.table_constraints tc
+            ON kcu.table_schema = tc.table_schema
+            AND kcu.table_name = tc.table_name
+            AND kcu.constraint_name = tc.constraint_name
+            AND tc.constraint_type = 'PRIMARY KEY'
+        WHERE c.table_schema = %s AND c.table_name = %s
+        ORDER BY c.ordinal_position;
+        """
+        return self.execute_query(sql, params=(schema, clean_tbl), max_rows=200)
+
+    def get_foreign_keys(self, table_name: Optional[str] = None, schema: str = "public") -> List[Dict[str, Any]]:
+        """只读获取外键关联定义"""
+        if table_name:
+            clean_tbl = table_name.strip().strip("'\"`")
+            sql = """
+            SELECT
+                kcu.table_name,
+                kcu.column_name,
+                ccu.table_name AS foreign_table_name,
+                ccu.column_name AS foreign_column_name
+            FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu
+                ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+            JOIN information_schema.constraint_column_usage ccu
+                ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema
+            WHERE tc.constraint_type = 'FOREIGN KEY'
+              AND tc.table_schema = %s
+              AND kcu.table_name = %s;
+            """
+            return self.execute_query(sql, params=(schema, clean_tbl), max_rows=100)
+        else:
+            sql = """
+            SELECT
+                kcu.table_name,
+                kcu.column_name,
+                ccu.table_name AS foreign_table_name,
+                ccu.column_name AS foreign_column_name
+            FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu
+                ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+            JOIN information_schema.constraint_column_usage ccu
+                ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema
+            WHERE tc.constraint_type = 'FOREIGN KEY'
+              AND tc.table_schema = %s;
+            """
+            return self.execute_query(sql, params=(schema,), max_rows=200)
+

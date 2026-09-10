@@ -107,7 +107,14 @@ def init_agent_engine(config: IROConfig) -> GlmClient:
     )
     client.register_tool_handler("log_search", lambda **kwargs: log_reader.search_logs(**kwargs))
     client.register_tool_handler("code_search", lambda query: code_reader.search_code(query))
-    client.register_tool_handler("memory_similar_stats", lambda keyword: memory_store.get_similar_incident_stats(keyword))
+    from iro_agent.knowledge.lookup import ProjectLookupEngine
+    from iro_agent.knowledge.store import ProjectKnowledgeStore
+    knowledge_store = ProjectKnowledgeStore(base_dir=Path(config.project_root) if Path(config.project_root).exists() else Path.cwd())
+    lookup_engine = ProjectLookupEngine(store=knowledge_store)
+
+    client.register_tool_handler("project_lookup", lambda query: lookup_engine.lookup(query))
+    client.register_tool_handler("db_list_tables", lambda: db_reader.list_tables())
+    client.register_tool_handler("db_describe_table", lambda table_name: db_reader.describe_table(table_name))
     client.register_tool_handler("db_query", lambda query, max_rows=20: db_reader.execute_query(query, max_rows=max_rows))
     client.register_tool_handler("diagnostic_pipeline", lambda symptom, log_keyword=None, user_message_time=None: orchestrator.run_pipeline(symptom=symptom, log_keyword=log_keyword, user_message_time=user_message_time))
 
@@ -374,10 +381,25 @@ def cmd_gateway(args):
                 print(f"[Http Gateway 状态] 未运行或不可达 ({e})")
 
 
+def cmd_init(args):
+    """初始化或刷新目标工业系统的项目业务蓝图"""
+    config = get_config()
+    if getattr(args, "project", None):
+        config.project_name = args.project
+    from iro_agent.knowledge.bootstrap import ProjectKnowledgeBootstrapper
+    bootstrapper = ProjectKnowledgeBootstrapper(config)
+    bootstrapper.run_bootstrap(refresh=getattr(args, "refresh", False))
+
+
 def main():
     parser = argparse.ArgumentParser(description="IRO_agent - 工业软件只读智能诊断助手")
     parser.add_argument("--config", "-c", help="指定配置文件路径 (默认查找 config.json / config.example.json)")
     subparsers = parser.add_subparsers(dest="command")
+
+    # init
+    init_parser = subparsers.add_parser("init", help="初始化或刷新目标工程的业务认知蓝图 (Project Knowledge Bootstrap)")
+    init_parser.add_argument("--project", "-p", help="指定目标工程标识/名称")
+    init_parser.add_argument("--refresh", "-r", action="store_true", help="强制重新扫描并刷新已有知识蓝图")
 
     # chat
     chat_parser = subparsers.add_parser("chat", help="启动交互式只读诊断会话")
@@ -399,7 +421,9 @@ def main():
     if args.config:
         load_config(args.config)
 
-    if args.command == "doctor":
+    if args.command == "init":
+        cmd_init(args)
+    elif args.command == "doctor":
         cmd_doctor(args)
     elif args.command == "config":
         cmd_config(args)

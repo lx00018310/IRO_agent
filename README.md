@@ -32,7 +32,17 @@ IRO_agent/
 │   │   ├── code_reader.py        # 源码安全检索与分片阅读
 │   │   ├── wrelease_reader.py    # .wrelease (ZIP) 解析、版本比对与 SHA256 校验
 │   │   ├── log_reader.py         # Pino JSON 与文本日志时间窗口检索
-│   │   └── db_reader.py          # PostgreSQL SELECT 只读双重拦截客户端
+│   │   └── db_reader.py          # PostgreSQL SELECT 只读双重拦截客户端 (支持表元数据探查)
+│   ├── knowledge/                # 项目业务认知与蓝图架构层 (V0.2 Bootstrap)
+│   │   ├── models.py             # 蓝图数据规范定义 (Blueprint, Table, Concept, SoT Rule)
+│   │   ├── store.py              # 蓝图持久化、快照备份与手工 override 合并
+│   │   ├── tree_scanner.py       # 目录树与技术栈探测器 (黑名单严格修剪)
+│   │   ├── schema_scanner.py     # 数据库 information_schema 只读探测器
+│   │   ├── code_scanner.py       # 定向抽取 ORM 模型与关键业务实体
+│   │   ├── synthesizer.py        # 结构化认知提纯器 (GLM 专注提炼 + 确定性规则兜底)
+│   │   ├── validator.py          # 蓝图合法性与敏感信息交叉核验器
+│   │   ├── bootstrap.py          # 初始化流水线编排器 (支持 init 与 --refresh)
+│   │   └── lookup.py             # 业务概念检索与权威事实源消歧引擎 (project_lookup)
 │   ├── memory/                   # 内部记忆库
 │   │   └── incident_store.py     # SQLite 故障案例持久化与近 90 天相似事故统计
 │   ├── analyzer/                 # 研判内核
@@ -140,18 +150,31 @@ iro-agent doctor
 iro-agent gateway doctor
 ```
 
-### 4. 交互式命令行诊断 (`iro-agent chat`)
+### 4. 项目业务认知初始化 (`iro-agent init`)
+
+> **核心机制**：在开始排查前，执行一次项目认知学习流水线。系统将全自动扫描代码模型（ORM）、目录树与数据库元数据，构建并固化一份持久化项目蓝图（`.iro_agent/project_blueprint.json`），明确权威事实源（Source of Truth），杜绝盲目写 SQL、查错表或混淆历史异步回执。
+
+```bash
+# 初始化当前项目业务认知
+iro-agent init
+
+# 若项目代码或数据库有版本迭代，执行增量刷新
+iro-agent init --refresh
+```
+
+### 5. 交互式命令行诊断 (`iro-agent chat`)
 
 ```bash
 iro-agent chat
 ```
 
 支持现场提问：
+- *"查询数据库最新一托的调度信息"*（系统自动先调用 `project_lookup` 匹配到 `ordersys_dock_task.current_pallet_slot`，精准查询当前月台托盘）
 - *"昨天好好的，今天为什么突然卡死了？"*
 - *"今天这个升级导致了问题吗？"*
 - *"到底哪个模块坏了？现场自动装车还能不能继续跑？"*
 
-### 5. 启动飞书机器人网关 (`iro-agent gateway start`)
+### 6. 启动飞书机器人网关 (`iro-agent gateway start`)
 
 ```bash
 # 启动飞书 WebSocket 长连接网关 (生产模式)
@@ -164,7 +187,7 @@ iro-agent gateway start --type http
 iro-agent gateway status
 ```
 
-### 6. 工控机版本更新与快捷启动
+### 7. 工控机版本更新与快捷启动
 
 - **工控机拉取更新（推荐命令）**：
   工控机作为生产运行端，为避免历史分叉或文件冲突导致 `git pull` 中断，推荐每次更新时执行以下命令强制对齐远程仓库（本地被 `.gitignore` 保护的 `config.json` 与 `.venv` 环境不会被覆盖）：

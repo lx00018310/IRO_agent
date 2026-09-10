@@ -1,0 +1,24 @@
+[
+  {
+    "question": "查询数据库最新一托的调度信息",
+    "expected_concept": "当前托盘",
+    "expected_primary_source": "ordersys_dock_task",
+    "forbidden_primary_sources": [
+      "ordersys_dispatch_callback_receipt"
+    ]
+  },
+  {
+    "question": "查询这托有没有收到调度完成回执",
+    "expected_concept": "调度完成回执",
+    "expected_primary_source": "ordersys_dispatch_callback_receipt",
+    "forbidden_primary_sources": []
+  },
+  {
+    "question": "当前11号月台正在处理什么？",
+    "expected_concept": "当前托盘",
+    "expected_primary_source": "ordersys_dock_task",
+    "forbidden_primary_sources": [
+      "ordersys_dispatch_callback_receipt"
+    ]
+  }
+]
