@@ -62,6 +62,8 @@ def test_fault_domain_and_impact():
     assert "Network" in domains
     assert "Backend" in domains
     assert domains["Network"]["confidence"] in ("High", "Medium")
+    # 核心完整性断言：无证据的领域必须评为 Insufficient evidence，严禁判定为 Mostly ruled out
+    assert domains["PLC"]["confidence"] == "Insufficient evidence"
 
     impact = ImpactScopeEvaluator.evaluate(
         symptom="装车显示屏提示网络断开，看板刷新延迟",
@@ -70,6 +72,8 @@ def test_fault_domain_and_impact():
     )
     assert impact["severity"] == "P2"
     assert "前端看板监控与刷新" in impact["functions_status"]
+    # 核心完整性断言：未被验证的功能默认必须为 Unknown，严禁默认 Normal
+    assert impact["functions_status"]["历史数据与发货清单查询"] == "Unknown"
 
 
 def test_interpreter_rendering():

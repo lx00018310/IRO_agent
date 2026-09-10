@@ -43,19 +43,46 @@ class IncidentStore:
                     related_git_commits TEXT,
                     related_wrelease_versions TEXT,
                     resolution_summary TEXT,
-                    similar_incident_ids TEXT
+                    similar_incident_ids TEXT,
+                    timeline_event_ids TEXT,
+                    active_version_provider TEXT
                 )
             """)
+
+            # 兼容旧版本表结构迁移：检查并补充新字段
+            cursor.execute("PRAGMA table_info(incidents)")
+            columns = [row[1] for row in cursor.fetchall()]
+            if "timeline_event_ids" not in columns:
+                cursor.execute("ALTER TABLE incidents ADD COLUMN timeline_event_ids TEXT")
+            if "active_version_provider" not in columns:
+                cursor.execute("ALTER TABLE incidents ADD COLUMN active_version_provider TEXT")
+
             conn.commit()
         finally:
             conn.close()
 
     def record_incident(self, data: Dict[str, Any]) -> str:
-        """记录或更新故障事件"""
+        """记录或更新故障事件，严格维护活跃版本源互斥性"""
         incident_id = data.get("incident_id")
         now_iso = datetime.datetime.now().isoformat()
         if not incident_id:
             incident_id = f"INC-{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
+
+        active_provider = data.get("active_version_provider") or "None"
+        git_commits = data.get("related_git_commits", [])
+        wrelease_versions = data.get("related_wrelease_versions", [])
+
+        # 互斥原则：根据活动提供者填充版本信息
+        if active_provider == "GitReader":
+            wrelease_versions = []
+        elif active_provider == "WReleaseReader":
+            git_commits = []
+
+        impact_scope_val = data.get("impact_scope")
+        if isinstance(impact_scope_val, (dict, list)):
+            impact_scope_str = json.dumps(impact_scope_val, ensure_ascii=False)
+        else:
+            impact_scope_str = str(impact_scope_val or "")
 
         conn = self._get_connection()
         try:
@@ -73,17 +100,21 @@ class IncidentStore:
                         impact_scope = coalesce(?, impact_scope),
                         severity = coalesce(?, severity),
                         confidence = coalesce(?, confidence),
-                        resolution_summary = coalesce(?, resolution_summary)
+                        resolution_summary = coalesce(?, resolution_summary),
+                        active_version_provider = coalesce(?, active_version_provider),
+                        timeline_event_ids = coalesce(?, timeline_event_ids)
                     WHERE incident_id = ?
                 """, (
                     now_iso,
                     data.get("status"),
                     data.get("fault_domain"),
                     data.get("root_cause"),
-                    data.get("impact_scope"),
+                    impact_scope_str,
                     data.get("severity"),
                     data.get("confidence"),
                     data.get("resolution_summary"),
+                    active_provider,
+                    json.dumps(data.get("timeline_event_ids", []), ensure_ascii=False),
                     incident_id,
                 ))
             else:
@@ -92,8 +123,9 @@ class IncidentStore:
                         incident_id, project, created_at, updated_at, status, symptom,
                         user_question, fault_domain, root_cause, impact_scope, severity,
                         confidence, related_logs, related_files, related_git_commits,
-                        related_wrelease_versions, resolution_summary, similar_incident_ids
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        related_wrelease_versions, resolution_summary, similar_incident_ids,
+                        timeline_event_ids, active_version_provider
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     incident_id,
                     data.get("project", get_config().project_name),
@@ -104,15 +136,17 @@ class IncidentStore:
                     data.get("user_question", ""),
                     data.get("fault_domain", "Unknown"),
                     data.get("root_cause", ""),
-                    data.get("impact_scope", ""),
+                    impact_scope_str,
                     data.get("severity", "P2"),
                     data.get("confidence", "Medium"),
                     json.dumps(data.get("related_logs", []), ensure_ascii=False),
                     json.dumps(data.get("related_files", []), ensure_ascii=False),
-                    json.dumps(data.get("related_git_commits", []), ensure_ascii=False),
-                    json.dumps(data.get("related_wrelease_versions", []), ensure_ascii=False),
+                    json.dumps(git_commits, ensure_ascii=False),
+                    json.dumps(wrelease_versions, ensure_ascii=False),
                     data.get("resolution_summary", ""),
                     json.dumps(data.get("similar_incident_ids", []), ensure_ascii=False),
+                    json.dumps(data.get("timeline_event_ids", []), ensure_ascii=False),
+                    active_provider,
                 ))
             conn.commit()
             return incident_id
@@ -129,9 +163,16 @@ class IncidentStore:
             if not row:
                 return None
             res = dict(row)
-            for k in ["related_logs", "related_files", "related_git_commits", "related_wrelease_versions", "similar_incident_ids"]:
+            for k in [
+                "related_logs",
+                "related_files",
+                "related_git_commits",
+                "related_wrelease_versions",
+                "similar_incident_ids",
+                "timeline_event_ids",
+            ]:
                 try:
-                    res[k] = json.loads(res[k])
+                    res[k] = json.loads(res[k]) if res.get(k) else []
                 except Exception:
                     res[k] = []
             return res
@@ -147,17 +188,17 @@ class IncidentStore:
             kw_pattern = f"%{keyword.strip()}%"
             cursor.execute("""
                 SELECT * FROM incidents 
-                WHERE symptom LIKE ? OR user_question LIKE ? OR root_cause LIKE ?
+                WHERE symptom LIKE ? OR user_question LIKE ? OR root_cause LIKE ? OR fault_domain LIKE ?
                 ORDER BY created_at DESC
                 LIMIT ?
-            """, (kw_pattern, kw_pattern, kw_pattern, limit))
+            """, (kw_pattern, kw_pattern, kw_pattern, kw_pattern, limit))
             rows = cursor.fetchall()
             return [dict(r) for r in rows]
         finally:
             conn.close()
 
     def get_similar_incident_stats(self, keyword: str, days: int = 90) -> Dict[str, Any]:
-        """统计近 N 天内的相似故障频次与归因分布"""
+        """统计近 N 天内的相似故障频次与归因分布，数据必须真实来源于存储记录"""
         matches = self.find_similar_incidents(keyword, limit=50)
 
         cutoff = (datetime.datetime.now() - datetime.timedelta(days=days)).isoformat()

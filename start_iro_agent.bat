@@ -2,7 +2,7 @@
 cd /d "%~dp0"
 
 echo =======================================================
-echo   IRO_agent (Industrial Read-Only Diagnostic Agent)
+echo   IRO_agent (工业只读诊断智能体)
 echo =======================================================
 echo.
 
@@ -17,7 +17,7 @@ if exist ".venv\Scripts\python.exe" (
 )
 
 if "%PYTHON_EXE%"=="" (
-    echo [ERROR] Python not found. Please install Python or initialize .venv.
+    echo [错误] 未找到 Python 环境。请先安装 Python 或初始化 .venv 虚拟环境。
     pause
     exit /b 1
 )
@@ -28,17 +28,18 @@ if /i "%~1"=="doctor" goto DO_DOCTOR
 if /i "%~1"=="test" goto DO_TEST
 if /i "%~1"=="config" goto DO_CONFIG
 
-echo Select an option:
-echo   [1] Interactive Diagnostic Chat (CLI Chat) [Default]
-echo   [2] WeChat Gateway Service (WeChat Gateway)
-echo   [3] Environment and Security Check (Doctor Check)
-echo   [4] Run Automated Verification Tests (Pytest)
-echo   [5] Edit Configuration File (Notepad config.json)
-echo   [6] Exit
+:MENU
+echo 请选择运行模式:
+echo   [1] 交互式诊断对话 (CLI Chat) [默认]
+echo   [2] 企业微信网关服务 (WeChat Gateway)
+echo   [3] 环境与安全体检 (Doctor Check)
+echo   [4] 运行自动化验证测试 (Pytest)
+echo   [5] 编辑配置文件 (记事本打开 config.json)
+echo   [6] 退出
 echo.
 
 set "CHOICE=1"
-set /p "CHOICE=Enter choice [1-6, default 1]: "
+set /p "CHOICE=请输入选项 [1-6, 默认 1]: "
 
 if "%CHOICE%"=="1" goto DO_CHAT
 if "%CHOICE%"=="2" goto DO_GATEWAY
@@ -47,11 +48,15 @@ if "%CHOICE%"=="4" goto DO_TEST
 if "%CHOICE%"=="5" goto DO_CONFIG
 if "%CHOICE%"=="6" goto DO_EXIT
 
+echo [提示] 输入无效，请重新选择。
+echo.
+goto MENU
+
 :DO_CONFIG
 if exist "config.json" (
     start notepad.exe config.json
 ) else (
-    echo [WARN] config.json not found.
+    echo [警告] 未找到 config.json 配置文件。
 )
 goto DO_PAUSE
 
@@ -73,5 +78,7 @@ goto DO_PAUSE
 
 :DO_PAUSE
 pause
+goto DO_EXIT
 
 :DO_EXIT
+exit /b 0

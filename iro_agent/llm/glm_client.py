@@ -23,8 +23,9 @@ SYSTEM_PROMPT = """你是工业现场只读智能诊断助手 IRO_agent。
 **排查建议**：（若有明确物理/配置排查动作则写1条，无必要则不写）
 - 建议1
 
-3. 【工具调用指引】：
-   - 涉及发布记录与日志异常时序排查时，可直接调用 diagnostic_pipeline 一键获取完整时间线、故障域与影响面。
+3. 【工具调用与时序分析指引】：
+   - 涉及发布记录、版本变更与日志异常时序比对（如“在发布之前还是之后发生”）时，优先调用 diagnostic_pipeline 一键获取完整时间线与时序判定。
+   - 核心完整性准则：时序上的先后承接关系并不等同于直接因果关系，客观陈述时间先后即可，严禁无据断言因果。
    - 严禁盲目发起过多无用轮次，用最少且确凿的工具调用直接推导出答案。
 
 4. 【禁止事项】：
@@ -229,14 +230,18 @@ class GlmClient:
             "Connection": "close",
         }
 
-        for _ in range(max_tool_rounds):
+        for round_idx in range(max_tool_rounds):
+            is_last = (round_idx >= max_tool_rounds - 1)
             payload = {
                 "model": self.glm_cfg.model,
                 "messages": formatted_messages,
-                "tools": self.tools_schema,
-                "tool_choice": "auto",
-                "max_tokens": 400,
+                "max_tokens": 800,
             }
+            if not is_last:
+                payload["tools"] = self.tools_schema
+                payload["tool_choice"] = "auto"
+            else:
+                formatted_messages.append({"role": "user", "content": "请基于当前已获得的事实数据，立即输出最终简明回答。"})
             import time
             data = None
             last_err = None
@@ -295,5 +300,22 @@ class GlmClient:
                     "tool_call_id": tc["id"],
                     "content": redact_secrets(tool_res_str),
                 })
+
+        try:
+            resp = requests.post(
+                url,
+                headers=headers,
+                json={
+                    "model": self.glm_cfg.model,
+                    "messages": formatted_messages + [{"role": "user", "content": "请依据以上所有检索事实，直接回答用户最初的问题。"}],
+                    "max_tokens": 800,
+                },
+                timeout=self.glm_cfg.timeout,
+            )
+            ans = resp.json()["choices"][0]["message"].get("content", "").strip()
+            if ans:
+                return redact_secrets(ans)
+        except Exception:
+            pass
 
         return "诊断轮次达到上限，请缩小问题范围或指定排查维度。"

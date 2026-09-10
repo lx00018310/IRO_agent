@@ -47,8 +47,17 @@ class LogReader:
                 data = json.loads(stripped)
                 level_num = data.get("level", 30)
                 level_name = self.PINO_LEVEL_MAP.get(level_num, str(level_num))
+                # 工业现场外呼业务异常兼容：remoteCode == ERROR 或 businessAccepted == False 提级为 ERROR
+                if str(data.get("remoteCode", "")).upper() == "ERROR" or data.get("businessAccepted") is False:
+                    level_name = "ERROR"
                 time_str = str(data.get("time", ""))
                 msg = data.get("msg", "")
+                remote_msg = str(data.get("remoteMessage") or "")
+                op_name = str(data.get("operation", "")).lower()
+                if "material" in op_name and remote_msg:
+                    msg = f"{msg} | 物料呼叫响应异常/拒收: {remote_msg}"
+                elif remote_msg:
+                    msg = f"{msg} | {remote_msg}"
                 err = data.get("err", {})
                 return {
                     "file": file_path.name,
@@ -123,8 +132,16 @@ class LogReader:
                             continue
 
                         # 关键字过滤
-                        if kw_lower and kw_lower not in parsed["raw"].lower():
-                            continue
+                        if kw_lower:
+                            raw_l = parsed["raw"].lower()
+                            if kw_lower in raw_l:
+                                pass
+                            elif ("拒收" in kw_lower or "物料" in kw_lower) and ("materialcall" in raw_l or "物料" in raw_l or "拒收" in raw_l):
+                                pass
+                            elif all(p in raw_l for p in kw_lower.split()):
+                                pass
+                            else:
+                                continue
 
                         # 时间窗口过滤
                         if parsed["time"]:

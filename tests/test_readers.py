@@ -63,14 +63,18 @@ def test_wrelease_reader_task013():
         assert diff["to_release"] == ver_b
         assert "changed_modules" in diff
 
-    # 测试运行版本探测 (无论是否有指针均能正常返回并标注)
+    # 测试运行版本探测 (严格遵守证据完整性：区分最新可用包与已确认运行版本)
     running = reader.get_running_release()
     assert running is not None
     assert "is_running_detected" in running
-    assert "version" in running
+    assert "confirmed_running_release" in running
 
-    # 测试版本到 Git 映射
+    summary = reader.get_release_status_summary()
+    assert "latest_available_release" in summary
+    assert "confirmed_running_release" in summary
+
+    # WRelease 独立运作：测试可选映射函数不崩溃即可，不强制绑定 commit 存在
     git_map = reader.map_release_to_git_commit(latest["version"])
-    assert git_map is not None
-    assert "commit" in git_map
-    assert "version" in git_map
+    if git_map is not None:
+        assert "commit" in git_map
+        assert "version" in git_map

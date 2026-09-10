@@ -63,6 +63,9 @@ def _is_fault_incident(user_question: str, reply: str) -> bool:
 def init_agent_engine(config: IROConfig) -> GlmClient:
     """组装所有只读读取器并注册到大模型/分析引擎"""
     audit = AuditLogger()
+    from iro_agent.readers.version_provider import VersionReaderResolver
+    version_reader, active_provider = VersionReaderResolver.resolve(config=config, audit_logger=audit)
+
     git_reader = GitReader(audit_logger=audit)
     code_reader = CodeReader(audit_logger=audit)
     wrelease_reader = WReleaseReader(audit_logger=audit)
@@ -75,17 +78,21 @@ def init_agent_engine(config: IROConfig) -> GlmClient:
 
     client = GlmClient(glm_cfg=config.glm, audit_logger=audit)
 
-    # 注册只读工具
+    # 注册版本读取工具
+    client.register_tool_handler("version_provider_info", lambda: {
+        "active_version_provider": active_provider,
+        "is_available": version_reader.is_available() if version_reader else False,
+        "current_version": version_reader.get_current_version() if version_reader else None,
+    })
     client.register_tool_handler("wrelease_list", lambda: wrelease_reader.list_available_releases())
     client.register_tool_handler("wrelease_running", lambda: wrelease_reader.get_running_release())
-    client.register_tool_handler("wrelease_git_map", lambda version: wrelease_reader.map_release_to_git_commit(version))
     client.register_tool_handler("wrelease_compare", lambda ver_a, ver_b: wrelease_reader.compare_releases(ver_a, ver_b))
     client.register_tool_handler("log_search", lambda **kwargs: log_reader.search_logs(**kwargs))
     client.register_tool_handler("git_recent_commits", lambda limit=20: git_reader.get_recent_commits(limit=limit))
     client.register_tool_handler("code_search", lambda query: code_reader.search_code(query))
     client.register_tool_handler("memory_similar_stats", lambda keyword: memory_store.get_similar_incident_stats(keyword))
     client.register_tool_handler("db_query", lambda query, max_rows=20: db_reader.execute_query(query, max_rows=max_rows))
-    client.register_tool_handler("diagnostic_pipeline", lambda symptom, log_keyword=None: orchestrator.run_pipeline(symptom=symptom, log_keyword=log_keyword))
+    client.register_tool_handler("diagnostic_pipeline", lambda symptom, log_keyword=None, user_message_time=None: orchestrator.run_pipeline(symptom=symptom, log_keyword=log_keyword, user_message_time=user_message_time))
 
     return client
 
@@ -129,7 +136,12 @@ def cmd_doctor(args):
         git_info = f"异常: {e}"
     checks.append(("Git 只读状态", git_info, git_ok))
 
-    # 6. SQLite 数据库
+    # 6. 版本提供者决议 (二选一)
+    from iro_agent.readers.version_provider import VersionReaderResolver
+    _, active_prov = VersionReaderResolver.resolve(config=config)
+    checks.append(("当前活跃版本源 (二选一)", active_prov, active_prov != "None"))
+
+    # 7. SQLite 数据库
     audit_ok = False
     try:
         al = AuditLogger()
@@ -138,7 +150,7 @@ def cmd_doctor(args):
         pass
     checks.append(("审计与记忆数据库 (SQLite)", "正常初始化", audit_ok))
 
-    # 7. GLM 模型接口状态
+    # 8. GLM 模型接口状态
     glm_ok = bool(config.glm.api_key and config.glm.api_key != "YOUR_GLM_API_KEY")
     glm_detail = f"已就绪 (模型: {config.glm.model})" if glm_ok else "未配置 API Key (需在 config.json 中填入)"
     checks.append(("GLM-5.3-Flash 接口", glm_detail, glm_ok))
@@ -226,11 +238,14 @@ def cmd_chat(args):
 
             # 仅当确认属于真实故障事件时，才沉淀至故障记忆库，防止普通查询与闲聊污染
             if _is_fault_incident(user_input, reply):
+                from iro_agent.readers.version_provider import VersionReaderResolver
+                _, act_prov = VersionReaderResolver.resolve(config=config)
                 memory_store.record_incident({
                     "symptom": clean_prompt[:100],
                     "user_question": user_input,
                     "status": "investigated",
                     "resolution_summary": reply[:300],
+                    "active_version_provider": act_prov,
                 })
 
         except (KeyboardInterrupt, EOFError):

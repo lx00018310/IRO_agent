@@ -1,5 +1,6 @@
 import json
 import zipfile
+import os
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from iro_agent.config import get_config
@@ -137,13 +138,17 @@ class WReleaseReader:
         }
 
     def get_latest_release(self) -> Optional[Dict[str, Any]]:
-        """获取最新生成的交付包"""
+        """获取最新生成的交付包元数据"""
         releases = self.list_available_releases()
         return releases[0] if releases else None
 
-    def get_running_release(self) -> Optional[Dict[str, Any]]:
-        """探测现场当前正在运行的 WRelease 版本"""
-        import os
+    def get_running_release(self) -> Dict[str, Any]:
+        """
+        探测现场当前实际运行的 WRelease 版本。
+        核心规范：
+        1. 严格区分 最新可用交付包、最新更新记录 与 确认运行版本。
+        2. 若无法验证现场运行指针，必须标为 UNKNOWN，严禁用最新发布包冒充！
+        """
         candidates = []
         env_file = os.environ.get("TASK013_BACKEND_VERSION_FILE")
         if env_file:
@@ -174,19 +179,45 @@ class WReleaseReader:
         if running_version:
             info = self.get_release_info(running_version)
             if info:
+                info["version"] = running_version
+                info["confirmed_running_release"] = running_version
                 info["is_running_detected"] = True
                 info["pointer_source"] = pointer_source
                 return info
+            return {
+                "version": running_version,
+                "confirmed_running_release": running_version,
+                "is_running_detected": True,
+                "pointer_source": pointer_source,
+            }
 
-        # 未检测到生产指针时，降级为最新生成交付包并明确标注
+        # 严格遵守证据完整性：无确凿运行指针时，运行版本为 UNKNOWN，严禁拿最新交付包冒充！
         latest = self.get_latest_release()
-        if latest:
-            latest["is_running_detected"] = False
-            latest["pointer_source"] = "未检测到生产运行指针 (降级为最新交付包)"
-        return latest
+        latest_ver = latest["version"] if latest else None
+        return {
+            "version": "UNKNOWN",
+            "confirmed_running_release": "UNKNOWN",
+            "is_running_detected": False,
+            "pointer_source": "unknown",
+            "latest_available_release": latest_ver,
+            "latest_update_record": latest.get("created_at") if latest else None,
+            "note": "现场未检测到 current-version.json 运行指针，运行版本处于 UNKNOWN 状态",
+        }
+
+    def get_release_status_summary(self) -> Dict[str, Any]:
+        """按证据完整性规范汇总版本状态：分离最新可用交付物与已确认运行版本"""
+        latest = self.get_latest_release()
+        running = self.get_running_release()
+        return {
+            "latest_available_release": latest.get("version") if latest else None,
+            "latest_update_record": latest.get("created_at") if latest else None,
+            "confirmed_running_release": running.get("confirmed_running_release", "UNKNOWN"),
+            "running_release_source": running.get("pointer_source", "unknown"),
+            "is_running_detected": running.get("is_running_detected", False),
+        }
 
     def map_release_to_git_commit(self, file_name_or_version: str) -> Optional[Dict[str, Any]]:
-        """将 WRelease 版本映射关联到 Git Commit"""
+        """可选辅助方法：将 WRelease 版本映射到 Git Commit（WRelease 独立运作时不再强求此项）"""
         info = self.get_release_info(file_name_or_version)
         if not info:
             return None
@@ -199,7 +230,6 @@ class WReleaseReader:
             gr = GitReader(audit_logger=self.audit)
             commits = gr.get_recent_commits(limit=50)
 
-            # 策略1: 在 commit 提交说明中精确匹配版本号 (如 v8.13.6 或 8.13.6)
             ver_clean = version.lstrip("v")
             for c in commits:
                 if version.lower() in c["summary"].lower() or ver_clean in c["summary"]:
@@ -212,7 +242,6 @@ class WReleaseReader:
                         "summary": c["summary"],
                     }
 
-            # 策略2: 按发布时间比对最相近的提交 (提交时间早于或相近于 created_at)
             if created_at and commits:
                 from datetime import datetime
                 try:
@@ -231,7 +260,6 @@ class WReleaseReader:
                 except Exception:
                     pass
 
-            # 策略3: 降级返回最新提交
             if commits:
                 c = commits[0]
                 return {
