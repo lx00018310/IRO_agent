@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 chcp 65001 >nul
 cd /d "%~dp0"
 
@@ -8,13 +8,10 @@ echo =======================================================
 echo.
 
 set "PYTHON_EXE="
-if exist ".venv\Scripts\python.exe" (
-    set "PYTHON_EXE=.venv\Scripts\python.exe"
-) else (
+if exist ".venv\Scripts\python.exe" set "PYTHON_EXE=.venv\Scripts\python.exe"
+if "%PYTHON_EXE%"=="" (
     where python >nul 2>nul
-    if %errorlevel% equ 0 (
-        set "PYTHON_EXE=python"
-    )
+    if not errorlevel 1 set "PYTHON_EXE=python"
 )
 
 if "%PYTHON_EXE%"=="" (
