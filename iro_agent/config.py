@@ -101,8 +101,22 @@ def load_config(config_path: Optional[str] = None) -> IROConfig:
 
     if target_path and target_path.exists():
         with open(target_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            _CONFIG_INSTANCE = IROConfig(**data)
+            raw_text = f.read()
+        try:
+            data = json.loads(raw_text)
+        except json.JSONDecodeError as jde:
+            # 容错降级：自动修复 Windows 路径中未经转义的单反斜杠 (例如 D:\TASK013...)
+            import re
+            fixed_text = re.sub(r'(?<!\\)\\(?!["\\/bfnrtu]|u[0-9a-fA-F]{4})', '/', raw_text)
+            try:
+                data = json.loads(fixed_text)
+            except Exception:
+                raise RuntimeError(
+                    f"\n[配置解析错误] 配置文件 {target_path} 的 JSON 格式不合法。\n"
+                    f"原因: {jde}\n"
+                    f"排查建议: Windows 路径请统一使用正斜杠 '/' (如 \"D:/TASK013/...\") 或双反斜杠 '\\\\'，严禁直接使用单反斜杠 '\\'。"
+                ) from None
+        _CONFIG_INSTANCE = IROConfig(**data)
     else:
         _CONFIG_INSTANCE = IROConfig()
 
