@@ -138,10 +138,19 @@ pip install -e .
 > 4. 发布应用版本并在飞书内安装生效，将机器人拉入目标工控机运维群。
 > 5. 凭证安全：支持通过环境变量 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` 注入，系统对凭据实施严格掩码与回送脱敏。
 
-### 3. 环境与网关自检 (`iro-agent gateway doctor`)
+### 3. 初始化与健康自检三部曲 (初次部署 / 升级必备)
 
-在工控机或本机部署后，执行一键健康体检：
+> [!IMPORTANT]
+> **初始化执行规范**：在正式启动日常诊断对话或网关服务之前，工控机现场环境**必须且严格按顺序**执行以下三步前置验证，以确保底层只读拦截、系统依赖连通性与项目事实源认知完全就绪：
 
+#### 步骤一：运行自动化验证套件 (Pytest)
+执行全套单元与端到端集成测试，核验只读硬拦截、数据读取器与分析推断引擎无破损：
+```bash
+pytest -v
+```
+
+#### 步骤二：工控机体检与安全体检 (Doctor Check)
+检查工控机运行环境、数据库只读连通性、大模型 API 与飞书网关凭证有效性：
 ```bash
 # 全局工控机系统体检
 iro-agent doctor
@@ -150,10 +159,8 @@ iro-agent doctor
 iro-agent gateway doctor
 ```
 
-### 4. 项目业务认知初始化 (`iro-agent init`)
-
-> **核心机制**：在开始排查前，执行一次项目认知学习流水线。系统将全自动扫描代码模型（ORM）、目录树与数据库元数据，构建并固化一份持久化项目蓝图（`.iro_agent/project_blueprint.json`），明确权威事实源（Source of Truth），杜绝盲目写 SQL、查错表或混淆历史异步回执。
-
+#### 步骤三：初始化/更新项目认知 (Project Bootstrap)
+扫描工程代码（ORM）、目录结构与数据库元数据，构建并固化权威事实源蓝图（`.iro_agent/project_blueprint.json`），杜绝后续排查写错 SQL、查错表或混淆历史异步回执：
 ```bash
 # 初始化当前项目业务认知
 iro-agent init
@@ -162,8 +169,14 @@ iro-agent init
 iro-agent init --refresh
 ```
 
-### 5. 交互式命令行诊断 (`iro-agent chat`)
+---
 
+### 4. 日常业务运行模式 (完成上述三步后启动)
+
+完成初始化三部曲且全部通过后，可根据现场需要启动以下运行模式之一：
+
+#### 运行模式 1：交互式命令行诊断 (`iro-agent chat`)
+现场工程师在工控机本地进行交互排查与根因溯源：
 ```bash
 iro-agent chat
 ```
@@ -174,8 +187,8 @@ iro-agent chat
 - *"今天这个升级导致了问题吗？"*
 - *"到底哪个模块坏了？现场自动装车还能不能继续跑？"*
 
-### 6. 启动飞书机器人网关 (`iro-agent gateway start`)
-
+#### 运行模式 2：启动飞书机器人网关 (`iro-agent gateway start`)
+生产环境长连接接入企业运维群，现场运维人员可直接在群内 @ 机器人进行全天候诊断：
 ```bash
 # 启动飞书 WebSocket 长连接网关 (生产模式)
 iro-agent gateway start
@@ -187,7 +200,9 @@ iro-agent gateway start --type http
 iro-agent gateway status
 ```
 
-### 7. 工控机版本更新与快捷启动
+---
+
+### 5. 工控机版本更新与快捷启动
 
 - **工控机拉取更新（推荐命令）**：
   工控机作为生产运行端，为避免历史分叉或文件冲突导致 `git pull` 中断，推荐每次更新时执行以下命令强制对齐远程仓库（本地被 `.gitignore` 保护的 `config.json` 与 `.venv` 环境不会被覆盖）：
@@ -195,15 +210,6 @@ iro-agent gateway status
   git fetch origin main && git reset --hard origin/main
   ```
 
-- **Windows 一键交互菜单**：
-  在 Windows 下可直接双击运行根目录的 `start_iro_agent.bat`，通过数字菜单直接呼出环境体检、交互对话、网关服务启动等功能。
+- **Windows 一键交互菜单 (`start_iro_agent.bat`)**：
+  在 Windows 下可直接双击运行根目录的 `start_iro_agent.bat`。脚本菜单已明确将初始化前置三部曲（`[11]` Pytest -> `[12]` Doctor Check -> `[13]` Project Bootstrap）与【日常业务运行】（`[1]` CLI Chat / `[2]` Feishu Gateway）及【辅助配置与退出】（`[21]` / `[22]`）在编号与视觉上做清晰分区，防止现场误操作跳过前置验证步骤。
 
----
-
-## 自动化测试
-
-执行完整测试套件：
-
-```bash
-pytest -v
-```

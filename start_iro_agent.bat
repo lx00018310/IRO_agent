@@ -28,21 +28,32 @@ if /i "%~1"=="test" goto DO_TEST
 if /i "%~1"=="config" goto DO_CONFIG
 
 :MENU
-echo 请选择运行模式:
-echo   [1] 交互式只读诊断对话 (CLI Chat) [默认]
-echo   [2] 飞书机器人网关服务 (Feishu Gateway)
-echo   [3] 工控机体检与安全体检 (Doctor Check)
-echo   [4] 运行自动化验证套件 (Pytest)
-echo   [5] 初始化/更新项目认知 (Project Bootstrap)
-echo   [6] 编辑配置文件 (记事本打开 config.json)
-echo   [7] 退出
+echo -------------------------------------------------------
+echo    [11] Step 1: 运行自动化验证套件 (Pytest)
+echo    [12] Step 2: 工控机体检与安全体检 (Doctor Check)
+echo    [13] Step 3: 初始化/更新项目认知 (Project Bootstrap)
+echo -------------------------------------------------------
+echo  【日常业务运行】(完成前置步骤后选用):
+echo    [1] 交互式只读诊断对话 (CLI Chat) [默认]
+echo    [2] 飞书机器人网关服务 (Feishu Gateway)
+echo -------------------------------------------------------
+echo  【辅助配置与系统退出】:
+echo    [21] 编辑配置文件 (记事本打开 config.json)
+echo    [22] 退出
+echo =======================================================
 echo.
 
 set "CHOICE=1"
-set /p "CHOICE=请输入选择 [1-7, 默认 1]: "
+set /p "CHOICE=请输入选择 [默认 1]: "
 
 if "%CHOICE%"=="1" goto DO_CHAT
 if "%CHOICE%"=="2" goto DO_GATEWAY
+if "%CHOICE%"=="11" goto DO_TEST
+if "%CHOICE%"=="12" goto DO_DOCTOR
+if "%CHOICE%"=="13" goto DO_INIT
+if "%CHOICE%"=="21" goto DO_CONFIG
+if "%CHOICE%"=="22" goto DO_EXIT
+@rem 兼容旧版数字按键输入
 if "%CHOICE%"=="3" goto DO_DOCTOR
 if "%CHOICE%"=="4" goto DO_TEST
 if "%CHOICE%"=="5" goto DO_INIT
