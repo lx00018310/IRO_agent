@@ -102,6 +102,21 @@ class ToolRegistry:
             if any(k in args for k in ("action", "command", "move_to", "speed", "reset_alarm")):
                 return False, "安全违规拦截：robot_query 仅允许查询状态，禁止发送任何运动或复位控制指令"
 
+        # 6. 针对 db_describe 的参数校验
+        if tool_name == "db_describe":
+            if not any(k in args for k in ("table_name", "table", "name")):
+                return False, "db_describe 必须提供 'table_name' 参数"
+
+        # 7. 针对 code_search 的参数校验
+        if tool_name == "code_search":
+            if not any(k in args for k in ("query", "keyword", "symbol")):
+                return False, "code_search 必须提供 'query' 参数"
+
+        # 8. 针对 web_fetch 的参数校验
+        if tool_name == "web_fetch":
+            if not any(k in args for k in ("url", "uri")):
+                return False, "web_fetch 必须提供 'url' 参数"
+
         return True, None
 
     def get_prompt_description(self) -> str:
@@ -129,6 +144,12 @@ class ToolRegistry:
             tier=EvidenceTier.TIER_1A_RUNTIME_DIGITAL,
         ))
         self.register(ToolSpec(
+            name="db_describe",
+            description="只读查看指定数据库表的表结构、字段类型与主键定义",
+            parameters_schema={"table_name": "str, 必填, 目标数据库表名"},
+            tier=EvidenceTier.TIER_1A_RUNTIME_DIGITAL,
+        ))
+        self.register(ToolSpec(
             name="config_lookup",
             description="查阅生效中的配置文件、环境变量与参数项",
             parameters_schema={"query": "str, 必填, 配置键或模块名"},
@@ -144,6 +165,12 @@ class ToolRegistry:
             name="project_lookup",
             description="检索项目蓝图知识库（业务流定义、状态机、设备拓扑架构）",
             parameters_schema={"query": "str, 必填, 检索概念或实体"},
+            tier=EvidenceTier.TIER_1B_STATIC_FACTS,
+        ))
+        self.register(ToolSpec(
+            name="code_search",
+            description="在本地工程源码中只读检索类名、方法名或关键逻辑",
+            parameters_schema={"query": "str, 必填, 代码或符号关键字"},
             tier=EvidenceTier.TIER_1B_STATIC_FACTS,
         ))
         self.register(ToolSpec(

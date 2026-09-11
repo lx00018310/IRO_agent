@@ -6,6 +6,7 @@ from iro_agent.config import get_config
 from iro_agent.security.audit import AuditLogger
 from iro_agent.readers.log_reader import LogReader
 from iro_agent.readers.db_reader import DatabaseReader
+from iro_agent.readers.code_reader import CodeReader
 from iro_agent.readers.web_reader import WebReader
 from iro_agent.readers.version_provider import VersionReaderResolver
 from iro_agent.memory.incident_store import IncidentStore
@@ -109,22 +110,66 @@ class InvestigationHarness:
         db_reader = DatabaseReader(db_config=self.config.database, audit_logger=self.audit)
         v_reader, _ = VersionReaderResolver.resolve(config=self.config, audit_logger=self.audit)
         web_reader = WebReader(audit_logger=self.audit)
+        code_reader = CodeReader(root_dir=self.config.project_root, audit_logger=self.audit)
 
-        tools: Dict[str, Callable] = {
-            "log_search": lambda **kwargs: log_reader.search_logs(**kwargs),
-            "db_query": lambda **kwargs: db_reader.execute_query(**kwargs),
-            "config_lookup": lambda query, limit=5: self.lookup_engine.config_lookup(query, limit=limit),
-            "project_lookup": lambda query: self.lookup_engine.lookup(query),
-            "version_current": lambda: v_reader.get_current_version() if v_reader else {"version": "UNKNOWN"},
-            "web_fetch": lambda **kwargs: web_reader.fetch_page(**kwargs),
-            "plc_read": lambda **kwargs: {
+        def log_search_adapter(keyword: str = "", query: str = "", limit: int = 20, max_results: Optional[int] = None, **kwargs):
+            target_kw = keyword or query
+            target_limit = max_results if max_results is not None else limit
+            return log_reader.search_logs(keyword=target_kw, max_results=target_limit, **kwargs)
+
+        def db_query_adapter(sql: str = "", query: str = "", max_rows: int = 100, **kwargs):
+            target_sql = sql or query
+            if not target_sql:
+                return {"error": "db_query 必须提供 'sql' 参数"}
+            return db_reader.execute_query(query=target_sql, max_rows=max_rows)
+
+        def db_describe_adapter(table_name: str = "", table: str = "", **kwargs):
+            target_tbl = table_name or table
+            if not target_tbl:
+                return {"error": "db_describe 必须提供 'table_name' 参数"}
+            return db_reader.describe_table(table_name=target_tbl)
+
+        def config_lookup_adapter(query: str = "", key: str = "", limit: int = 5, **kwargs):
+            target_q = query or key
+            return self.lookup_engine.config_lookup(query=target_q, limit=limit)
+
+        def project_lookup_adapter(query: str = "", **kwargs):
+            return self.lookup_engine.lookup(query=query)
+
+        def code_search_adapter(query: str = "", **kwargs):
+            return code_reader.search_code(query=query)
+
+        def version_current_adapter(**kwargs):
+            return v_reader.get_current_version() if v_reader else {"version": "UNKNOWN"}
+
+        def web_fetch_adapter(url: str = "", **kwargs):
+            return web_reader.fetch_page(url=url, **kwargs)
+
+        def plc_read_adapter(address: str = "", register: str = "", **kwargs):
+            return {
                 "status": "UNAVAILABLE",
                 "error": "PLC reader adapter is not configured in current environment: observability_gap",
-            },
-            "robot_query": lambda **kwargs: {
+                "target": address or register,
+            }
+
+        def robot_query_adapter(query_type: str = "status", **kwargs):
+            return {
                 "status": "UNAVAILABLE",
                 "error": "Robot query adapter is not configured in current environment: observability_gap",
-            },
+                "query_type": query_type,
+            }
+
+        tools: Dict[str, Callable] = {
+            "log_search": log_search_adapter,
+            "db_query": db_query_adapter,
+            "db_describe": db_describe_adapter,
+            "config_lookup": config_lookup_adapter,
+            "project_lookup": project_lookup_adapter,
+            "code_search": code_search_adapter,
+            "version_current": version_current_adapter,
+            "web_fetch": web_fetch_adapter,
+            "plc_read": plc_read_adapter,
+            "robot_query": robot_query_adapter,
         }
         if getattr(self, "planner_mode", None) == "deterministic":
             tools["diagnostic_pipeline"] = lambda symptom: self.orchestrator.run_pipeline(symptom=symptom)
