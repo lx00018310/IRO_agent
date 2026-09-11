@@ -11,10 +11,13 @@ from iro_agent.investigation.hypotheses import HypothesisManager
 
 class EvidenceEvaluator:
     """
-    证据客观事实提取与因果归因解耦评估器 (Decoupled Evidence Evaluator)
+    证据客观事实提取器 (Objective Evidence Evaluator)
     分为两个清晰阶段：
-    阶段 1: 客观事实化提取 (extract_fact) - 提取纯粹观察结果，超时/异常显式判定为 OBSERVABILITY_GAP；
-    阶段 2: 因果推断裁决 (judge_causality) - 基于观察事实对假设打标签，存在观测缺口时绝不脑补或误判正常。
+    阶段 1: 客观事实化提取 (extract_fact) - 提取纯粹观察结果，超时/异常显式判定为 OBSERVABILITY_GAP 或 TOOL_EXECUTION_ERROR；
+    阶段 2: 事实定性与评级 (judge_causality / evaluate_step) - 判定证据的可用性/客观性（FACT, MISSING, OBSERVABILITY_GAP），
+            绝不粗糙做因果映射，绝不直接操作 HypothesisManager 修改假设状态，
+            绝不因为日志中出现 'ERROR' 字符串就自动支持当前假设或认定根本原因。
+            因果归因与假设状态转移严格交由规划器 (Planner) 基于完整证据链统一评估。
     """
 
     TIMEOUT_AND_GAP_PATTERNS = [
@@ -56,14 +59,14 @@ class EvidenceEvaluator:
         is_error: bool,
         error_type: Optional[str],
         fact_summary: str,
-        hypo_mgr: HypothesisManager,
+        hypo_mgr: Optional[HypothesisManager] = None,
     ) -> EvidenceEvaluationResult:
         """
-        阶段 2: 因果判定裁决
+        阶段 2: 证据事实定性与客观评级 (不直接修改假设状态，消除粗糙因果捷径)
         """
         impacted: Dict[str, str] = {}
 
-        # 1. 若工具异常或观测缺口，绝不允许误判为"系统正常"或推翻相关假设！
+        # 1. 若工具异常或观测缺口，判定为 OBSERVABILITY_GAP 或 MISSING，绝不影响假设
         if is_error:
             verdict = "OBSERVABILITY_GAP" if error_type == "OBSERVABILITY_GAP" else "MISSING"
             detail = fact_summary
@@ -78,86 +81,52 @@ class EvidenceEvaluator:
         verdict = "INCONCLUSIVE"
         detail = ""
 
-        # 2. 数据库任务存在性评估
+        # 2. 数据库任务存在性评估：仅记录客观事实，不自动改变假设状态
         if step.evidence_type in ("task_creation_state", "dock_task_status") or step.tool == "db_query":
             rows = tool_output if isinstance(tool_output, list) else (tool_output.get("rows", []) if isinstance(tool_output, dict) else [])
             if rows:
                 verdict = "FACT"
                 detail = f"数据库证实存在记录 (共 {len(rows)} 条)"
-                for h_id in step.hypothesis_ids:
-                    h = hypo_mgr.get_hypothesis(h_id)
-                    if h and ("未创建" in h.description or "未成功创建" in h.description):
-                        hypo_mgr.rule_out(h_id, reason="数据库已存在主任务记录", evidence=detail)
-                        impacted[h_id] = HypothesisStatus.RULED_OUT.value
-                    elif h and ("拒绝迁移" in h.description or "校验未通过" in h.description or "锁" in h.description or "卡住" in h.description):
-                        hypo_mgr.strongly_support(h_id, reason="数据库记录支持状态停滞", evidence=detail)
-                        impacted[h_id] = HypothesisStatus.STRONGLY_SUPPORTED.value
             else:
-                verdict = "SUPPORTING"
-                detail = "数据库未检索到有效主任务记录"
-                for h_id in step.hypothesis_ids:
-                    h = hypo_mgr.get_hypothesis(h_id)
-                    if h and ("未创建" in h.description or "未成功创建" in h.description):
-                        hypo_mgr.confirm(h_id, reason="数据库确实无任务记录", evidence=detail)
-                        impacted[h_id] = HypothesisStatus.CONFIRMED.value
+                verdict = "FACT"
+                detail = "数据库未检索到有效记录 (0 条)"
 
-        # 3. 日志报错与通信异常评估
+        # 3. 日志检索评估：仅记录是否有日志匹配与报错堆栈事实，不自动给假设打支持标签
         elif "log" in step.evidence_type or step.tool == "log_search":
             logs = tool_output if isinstance(tool_output, list) else (tool_output.get("logs", []) if isinstance(tool_output, dict) else [])
             if logs:
+                verdict = "FACT"
                 has_error = any(
                     isinstance(item, dict) and item.get("level") == "ERROR" or "error" in str(item).lower() or "exception" in str(item).lower()
                     for item in logs
                 )
                 if has_error:
-                    verdict = "FACT"
-                    detail = f"捕获到系统运行报错与异常堆栈 (共 {len(logs)} 条日志)"
-                    for h_id in step.hypothesis_ids:
-                        hypo_mgr.strongly_support(h_id, reason="日志捕获直接报错", evidence=detail)
-                        impacted[h_id] = HypothesisStatus.STRONGLY_SUPPORTED.value
+                    detail = f"日志检索完成，包含报错或异常堆栈 (共 {len(logs)} 条)"
                 else:
-                    verdict = "SUPPORTING"
-                    detail = f"检索到通信流水，但无致命 ERROR 级别异常 (共 {len(logs)} 条)"
+                    detail = f"日志检索完成，未见致命报错 (共 {len(logs)} 条)"
             else:
                 verdict = "MISSING"
-                detail = "指定关键词日志未见异常或无匹配项"
+                detail = "指定关键词日志未见匹配项"
 
         # 4. 配置检索评估
         elif step.tool == "config_lookup":
             configs = tool_output if isinstance(tool_output, list) else (tool_output.get("configs", []) if isinstance(tool_output, dict) else [])
             if configs:
                 verdict = "FACT"
-                detail = f"查明目标配置项及其覆盖规则: {len(configs)} 项"
-                for h_id in step.hypothesis_ids:
-                    hypo_mgr.strongly_support(h_id, reason="已定位有效配置及其生效优先级", evidence=detail)
-                    impacted[h_id] = HypothesisStatus.STRONGLY_SUPPORTED.value
+                detail = f"查明目标配置项: {len(configs)} 项"
             else:
                 verdict = "MISSING"
                 detail = "未发现匹配的有效配置项"
 
         # 5. PLC 读取评估
         elif step.tool == "plc_read":
-            if isinstance(tool_output, dict) and tool_output.get("status") in ("OFFLINE", "DISCONNECTED"):
-                verdict = "FACT"
-                detail = f"PLC 端口读取显示离线/未连接: {tool_output}"
-                for h_id in step.hypothesis_ids:
-                    hypo_mgr.strongly_support(h_id, reason="PLC 读状态证实离线", evidence=detail)
-                    impacted[h_id] = HypothesisStatus.STRONGLY_SUPPORTED.value
-            else:
-                verdict = "FACT"
-                detail = f"PLC 状态读取完成: {tool_output}"
+            verdict = "FACT"
+            detail = f"PLC 端口读取完成: {tool_output}"
 
         # 6. 机器人状态查询评估
         elif step.tool == "robot_query":
-            if isinstance(tool_output, dict) and tool_output.get("alarm"):
-                verdict = "FACT"
-                detail = f"机器人查询发现报警: {tool_output.get('alarm')}"
-                for h_id in step.hypothesis_ids:
-                    hypo_mgr.strongly_support(h_id, reason="机器人自检返回报警码", evidence=detail)
-                    impacted[h_id] = HypothesisStatus.STRONGLY_SUPPORTED.value
-            else:
-                verdict = "FACT"
-                detail = f"机器人查询完成: {tool_output}"
+            verdict = "FACT"
+            detail = f"机器人状态查询完成: {tool_output}"
 
         else:
             verdict = "FACT" if tool_output else "MISSING"
@@ -176,9 +145,9 @@ class EvidenceEvaluator:
         cls,
         step: InvestigationStep,
         tool_output: Any,
-        hypo_mgr: HypothesisManager,
+        hypo_mgr: Optional[HypothesisManager] = None,
     ) -> EvidenceEvaluationResult:
-        """解耦编排入口：先后执行事实提取与因果判定"""
+        """客观事实提取入口：先后执行事实提取与事实定性"""
         step.result = tool_output
         is_error, error_type, fact_summary = cls.extract_fact(step, tool_output)
         return cls.judge_causality(
@@ -206,16 +175,8 @@ class EvidenceEvaluator:
             is_gap = any(re.search(p, err_msg) for p in cls.TIMEOUT_AND_GAP_PATTERNS)
             error_type = "OBSERVABILITY_GAP" if is_gap else "TOOL_FAILURE"
 
-        supports: List[str] = []
-        contradicts: List[str] = []
-        for h_id, status in eval_res.impacted_hypotheses.items():
-            if status in (HypothesisStatus.CONFIRMED.value, HypothesisStatus.STRONGLY_SUPPORTED.value):
-                supports.append(h_id)
-            elif status == HypothesisStatus.RULED_OUT.value:
-                contradicts.append(h_id)
-
         reliability = 0.0 if is_error else (0.95 if eval_res.verdict == "FACT" else 0.7)
-        relevance = 0.9 if eval_res.impacted_hypotheses else 0.6
+        relevance = 0.8 if eval_res.verdict == "FACT" else 0.5
 
         return EvidenceRecord(
             evidence_id=f"EV_{step.step_id}",
@@ -224,10 +185,11 @@ class EvidenceEvaluator:
             tier=step.evidence_tier,
             query=step.tool_args,
             raw_summary=eval_res.detail,
+            normalized_fact=eval_res.detail,
             reliability=reliability,
             relevance=relevance,
-            supports=supports,
-            contradicts=contradicts,
+            supports=[],
+            contradicts=[],
             is_error=is_error,
             error_type=error_type,
             provenance={"tool": step.tool, "step_id": step.step_id, "verdict": eval_res.verdict},

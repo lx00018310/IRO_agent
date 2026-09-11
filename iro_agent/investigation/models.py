@@ -70,6 +70,7 @@ class EvidenceRecord(BaseModel):
 
     query: Dict[str, Any] = Field(default_factory=dict)
     raw_summary: str = ""
+    normalized_fact: str = ""
 
     timestamp: Optional[str] = None
     reliability: float = 1.0

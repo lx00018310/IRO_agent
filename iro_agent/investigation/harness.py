@@ -191,6 +191,17 @@ class InvestigationHarness:
                 # 应用大模型规划器对假设提出的生命周期更新
                 if getattr(decision, "hypothesis_updates", None):
                     applied = hypo_mgr.apply_updates(decision.hypothesis_updates, evidence_history=state.evidence)
+                    for upd in decision.hypothesis_updates:
+                        if upd.hypothesis_id:
+                            for ev_id in upd.evidence_ids:
+                                for ev in state.evidence:
+                                    if ev.evidence_id == ev_id:
+                                        if upd.action in (HypothesisAction.SUPPORT, HypothesisAction.REVISE):
+                                            if upd.hypothesis_id not in ev.supports:
+                                                ev.supports.append(upd.hypothesis_id)
+                                        elif upd.action in (HypothesisAction.CONTRADICT, HypothesisAction.RETIRE):
+                                            if upd.hypothesis_id not in ev.contradicts:
+                                                ev.contradicts.append(upd.hypothesis_id)
                     if verbose and applied:
                         print(f"  [假设生命周期动态更新]: {', '.join(applied)}")
 
