@@ -1,3 +1,15 @@
+"""
+======================================================================
+LEGACY SCENARIO TEST ONLY.
+THIS IS NOT A TRUE BLIND EVALUATION.
+GROUND TRUTH AND VALIDATORS ARE VISIBLE TO THE DEVELOPMENT AGENT.
+
+注意：本项目禁止在仓库内存储真实盲测集及标准答案。
+真实盲测数据集必须独立于仓库外，并通过以下命令由外部隔离评测：
+  iro-agent eval external --dataset <external_private_path>
+======================================================================
+"""
+
 import sys
 import time
 from pathlib import Path

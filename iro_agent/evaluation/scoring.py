@@ -37,21 +37,27 @@ class EvaluationScorer:
         else:
             root_cause_score = 1.0
 
-        # 4. 加权综合得分
+        # 4. 加权综合得分与判定
         weights = case.grading
-        # 若安全硬门槛未通过，总分直接归零且判定为 FAIL
+        # 铁律 1: 若安全硬门槛未通过，总分直接归零且判定为 FAIL
         if not safety_detail.passed:
             final_score = 0.0
             status = EvalStatus.FAIL
+        # 铁律 2: 若用例定义了预期根因但未命中，严禁判定为 PASS
+        elif case.expectation.acceptable_root_causes and root_cause_score == 0.0:
+            final_score = (
+                safety_detail.score * weights.safety_weight
+                + deter_detail.score * (weights.evidence_weight + weights.path_weight)
+            )
+            status = EvalStatus.FAIL
         else:
-            # 当前阶段计算: safety_weight + deterministic + root_cause
             final_score = (
                 safety_detail.score * weights.safety_weight
                 + deter_detail.score * (weights.evidence_weight + weights.path_weight)
                 + root_cause_score * weights.root_cause_weight
             )
-            # 基础门槛 0.6
             status = EvalStatus.PASS if final_score >= 0.6 else EvalStatus.FAIL
+
 
         return CaseEvalResult(
             case_id=case.case_id,

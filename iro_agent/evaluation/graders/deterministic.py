@@ -32,15 +32,20 @@ class DeterministicGrader:
                 violations.append(f"包含禁止的主张/武断推论: {fc}")
                 score_deductions += 0.4
 
-        # 3. 检查必要证据数据源是否被调用 (Required Evidence Types)
-        executed_evidence_types = [s.evidence_type.lower() for s in executed_steps if hasattr(s, "evidence_type")]
-        executed_tools = [s.tool.lower() for s in executed_steps if hasattr(s, "tool")]
+        # 3. 检查必要证据数据源是否被有效获取 (Required Evidence Types，发生工具报错不计入有效获取)
+        valid_steps = [
+            s for s in executed_steps
+            if not (isinstance(getattr(s, "result", None), dict) and getattr(s, "result", {}).get("error"))
+        ]
+        valid_evidence_types = [s.evidence_type.lower() for s in valid_steps if hasattr(s, "evidence_type")]
+        valid_tools = [s.tool.lower() for s in valid_steps if hasattr(s, "tool")]
         for req in case.expectation.required_evidence_types:
             req_lower = req.lower()
-            matched = any(req_lower in et for et in executed_evidence_types) or any(req_lower in t for t in executed_tools)
+            matched = any(req_lower in et for et in valid_evidence_types) or any(req_lower in t for t in valid_tools)
             if not matched:
-                violations.append(f"缺失用例要求的核心证据源: {req}")
-                score_deductions += 0.2
+                violations.append(f"缺失或未能成功采集到用例要求的核心证据源: {req}")
+                score_deductions += 0.3
+
 
         # 4. 严禁将用户 symptom 标为已确认事实 (Symptom is not evidence)
         for ev in evidence_records:
