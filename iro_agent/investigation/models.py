@@ -124,3 +124,23 @@ class InvestigationReport(BaseModel):
             self.physical_escalation_required = True
 
 
+class DecisionAction(str, Enum):
+    """规划器单步动作枚举"""
+    EXECUTE_TOOL = "EXECUTE_TOOL"
+    CONVERGE = "CONVERGE"
+    ESCALATE_PHYSICAL = "ESCALATE_PHYSICAL"
+    GIVE_UP = "GIVE_UP"
+
+
+class PlannerDecision(BaseModel):
+    """LLM 调查规划器单步决策结果"""
+    thought: str = ""
+    decision: DecisionAction = DecisionAction.EXECUTE_TOOL
+    target_hypothesis: Optional[str] = None
+    tool_name: Optional[str] = None
+    tool_arguments: Dict[str, Any] = Field(default_factory=dict)
+    reason: str = ""
+    error: Optional[str] = None
+
+
+

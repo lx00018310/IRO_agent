@@ -7,7 +7,12 @@ from iro_agent.investigation.models import (
     EvidenceEvaluationResult,
     InvestigationReport,
     EvidenceRecord,
+    DecisionAction,
+    PlannerDecision,
 )
+from iro_agent.investigation.tool_registry import ToolSpec, ToolRegistry
+from iro_agent.investigation.planner_validator import PlannerValidator
+from iro_agent.investigation.llm_planner import LLMInvestigationPlanner
 from iro_agent.investigation.state import InvestigationState
 from iro_agent.investigation.trace import InvestigationTrace, TraceIteration
 from iro_agent.investigation.classifier import InvestigationCaseClassifier
@@ -28,6 +33,12 @@ __all__ = [
     "EvidenceEvaluationResult",
     "InvestigationReport",
     "EvidenceRecord",
+    "DecisionAction",
+    "PlannerDecision",
+    "ToolSpec",
+    "ToolRegistry",
+    "PlannerValidator",
+    "LLMInvestigationPlanner",
     "InvestigationState",
     "InvestigationTrace",
     "TraceIteration",
