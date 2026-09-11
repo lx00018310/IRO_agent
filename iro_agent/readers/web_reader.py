@@ -179,12 +179,13 @@ class WebReader:
         need_browser_upgrade = False
         content = http_res.get("content", "")
         raw_text = http_res.get("raw_text", "")
+        is_blazor = any(k in raw_text.lower() for k in ["_framework/blazor", "devexpress.expressapp.blazor", "devexpress.blazor", "blazor.server.js"])
 
         # 特征 1: 遇到典型的无会话拦截与报错 (如 Application Error / Session Expired)
         if "application error" in content.lower() or "session expired" in content.lower():
             need_browser_upgrade = True
-        # 特征 2: SPA 骨架或 DevExpress/Vue/React 前端特征
-        elif any(marker in raw_text.lower() for marker in ["<div id=\"app\">", "<div id=\"root\">", "dx.all.js", "aspxwebcontrol", "__viewstate"]):
+        # 特征 2: SPA 骨架或 DevExpress/Vue/React/Blazor 前端特征
+        elif is_blazor or any(marker in raw_text.lower() for marker in ["<div id=\"app\">", "<div id=\"root\">", "dx.all.js", "aspxwebcontrol", "__viewstate"]):
             need_browser_upgrade = True
         # 特征 3: 提取出的可见文本极少但原始 HTML 较大 (说明数据全靠 JS 异步加载)
         elif len(content) < 200 and len(raw_text) > 1500:
@@ -207,6 +208,16 @@ class WebReader:
                     return browser_res
             except Exception:
                 pass  # 浏览器降级失败时保留 HTTP 探测结果
+
+        if is_blazor:
+            http_res["is_blazor"] = True
+            http_res["content"] += (
+                "\n\n【架构诊断与排查建议】:\n"
+                "- 目标调度系统为 DevExpress XAF Blazor Server (ASP.NET Core + SignalR WebSocket)，界面完全由服务端长连接异步推送到浏览器渲染；\n"
+                "- 当前工控机运行环境未安装 Playwright 浏览器探针，静态 HTTP 模式无法获取动态表格内容（此前看到的 Application Error 为 Blazor 页面底层默认隐藏的占位模版，非服务端崩溃）；\n"
+                "- 建议方案 1: 在工控机终端执行 `pip install playwright && playwright install chromium` 启用无头浏览器探针；\n"
+                "- 建议方案 2 (强烈推荐): 直接配置调度数据库只读连接，使用 db_query 工具毫秒级查询底层 BOAgvTask 等业务/日志表。"
+            )
 
         return http_res
 
@@ -468,11 +479,15 @@ class WebReader:
         no_svg = re.sub(r"<svg[^>]*>.*?</svg>", " ", no_style, flags=re.IGNORECASE | re.DOTALL)
         no_comments = re.sub(r"<!--.*?-->", " ", no_svg, flags=re.DOTALL)
 
+        # 剥离 Blazor/前端默认隐藏的底层占位模版 (如 blazor-error-ui、components-reconnect-modal)
+        no_blazor_err = re.sub(r'<div[^>]*id=["\']blazor-error-ui["\'][^>]*>.*?</div>', " ", no_comments, flags=re.IGNORECASE | re.DOTALL)
+        no_blazor_rec = re.sub(r'<div[^>]*id=["\']components-reconnect-modal["\'][^>]*>.*?</div>', " ", no_blazor_err, flags=re.IGNORECASE | re.DOTALL)
+
         # 3. 提取结构化表格 Markdown (如有)
         md_tables = self.html_to_markdown_tables(text)
 
         # 4. 替换常见分块标签为换行
-        with_newlines = re.sub(r"<(?:p|div|tr|li|h[1-6]|br)[^>]*>", "\n", no_comments, flags=re.IGNORECASE)
+        with_newlines = re.sub(r"<(?:p|div|tr|li|h[1-6]|br)[^>]*>", "\n", no_blazor_rec, flags=re.IGNORECASE)
 
         # 5. 剥离所有 HTML 标签
         stripped = re.sub(r"<[^>]+>", " ", with_newlines)

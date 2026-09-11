@@ -76,6 +76,7 @@ class FeishuGateway(GatewayAdapter):
         self._ws_client: Optional[lark.ws.Client] = None
         self._thread: Optional[threading.Thread] = None
         self._running: bool = False
+        self.async_processing: bool = False
 
         # 初始化飞书 OpenAPI 客户端
         if self.app_id and self.app_secret:
@@ -93,6 +94,8 @@ class FeishuGateway(GatewayAdapter):
         """启动飞书 WebSocket 长连接监听"""
         if not self.app_id or not self.app_secret:
             raise ValueError("启动飞书网关失败: 未配置有效的 FEISHU_APP_ID 或 FEISHU_APP_SECRET")
+
+        self.async_processing = True
 
         dispatcher_builder = lark.EventDispatcherHandler.builder("", "")
         dispatcher_builder.register_p2_im_message_receive_v1(self._on_message_receive)
@@ -325,6 +328,32 @@ class FeishuGateway(GatewayAdapter):
         # 立即添加 OK 表情反应，向用户确认消息已接收并正在处理 (类似 Hermes)
         self.add_reaction(message_id=msg.message_id, emoji_type="OK")
 
+        if getattr(self, "async_processing", False):
+            t = threading.Thread(
+                target=self._process_message_payload,
+                args=(msg, session_id, target_project, prompt_content, tmp_image_to_use, should_cleanup_img),
+                daemon=True,
+            )
+            t.start()
+        else:
+            self._process_message_payload(
+                msg=msg,
+                session_id=session_id,
+                target_project=target_project,
+                prompt_content=prompt_content,
+                tmp_image_to_use=tmp_image_to_use,
+                should_cleanup_img=should_cleanup_img,
+            )
+
+    def _process_message_payload(
+        self,
+        msg: GatewayMessage,
+        session_id: str,
+        target_project: str,
+        prompt_content: str,
+        tmp_image_to_use: Optional[str],
+        should_cleanup_img: bool,
+    ) -> None:
         # 0. 纠错与显式记忆指示拦截 (落实记忆诚实原则)
         from iro_agent.memory.correction_detector import CorrectionDetector
         from iro_agent.memory.learning_store import LearningMemoryStore
