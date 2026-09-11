@@ -110,6 +110,23 @@ pip install -e .
   ./uv.exe pip install -e .
   ```
 
+#### 动态网页探针内核安装 (用于 WES / 调度动态页面抓取)
+
+若现场需要通过 `web_fetch` 抓取并排查调度系统网页（如 DevExpress Blazor Server、Vue、React、ASP.NET WebForms 等动态异步页面），Playwright 依赖独立的 Chromium 运行环境，需执行官方下载指令：
+
+```bash
+# 下载并安装 Chromium 浏览器内核
+playwright install chromium
+```
+
+> [!TIP]
+> **内网/弱网加速下载**：若现场工控机访问海外源较慢，可在下载前指定国内镜像源：
+> ```powershell
+> # Windows PowerShell 环境：
+> $env:PLAYWRIGHT_DOWNLOAD_HOST="https://npmmirror.com/mirrors/playwright/"
+> playwright install chromium
+> ```
+
 ### 2. 配置文件说明 (单一配置文件)
 
 复制 `config.example.json` 为 `config.json`，配置飞书凭据与工程路径：
