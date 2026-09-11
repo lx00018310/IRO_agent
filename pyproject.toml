@@ -20,6 +20,9 @@ dependencies = [
 [project.scripts]
 iro-agent = "iro_agent.cli:main"
 
+[tool.setuptools.packages.find]
+include = ["iro_agent*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
