@@ -491,3 +491,66 @@ class GlmClient:
             self.audit.record(tool_name="GlmClient", operation="parse_json", result_summary=f"JSON解析异常: {e}, 原文: {raw_output[:200]}", status="WARN")
             return {"raw_response": raw_output, "error": f"JSON parse error: {e}"}
 
+    def complete_structured(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        max_tokens: int = 2000,
+        temperature: float = 0.1,
+    ) -> str:
+        """
+        纯 LLM 结构化单轮完成接口 (用于 Agentic Planner 与 Hypothesis Generator)
+        硬性隔离要求：
+        1. NO global legacy SYSTEM_PROMPT: 严禁自动拼入通用 SYSTEM_PROMPT，仅使用专用的 system_prompt；
+        2. NO tools: tools 默认为 None，严禁向模型注入全局 tools_schema，严禁模型直接发起 tool_calls；
+        3. NO internal tool loop: 纯单轮文本输出，绝不执行内部多轮工具循环；
+        4. NO automatic project_lookup/db_query: 严禁自动调用项目与数据库查询工具。
+        """
+        if not self.glm_cfg.api_key or self.glm_cfg.api_key == "YOUR_GLM_API_KEY":
+            raise ValueError("未配置有效的 GLM API Key。请在 config.json 中配置 glm.api_key。")
+
+        url = f"{self.glm_cfg.api_base.rstrip('/')}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.glm_cfg.api_key}",
+            "Content-Type": "application/json",
+            "Connection": "close",
+        }
+        sys_msg = system_prompt or "你是一个严谨的工业故障诊断决策规划器，只能输出规范的单一 JSON 对象。"
+        messages = [
+            {"role": "system", "content": redact_secrets(sys_msg)},
+            {"role": "user", "content": redact_secrets(prompt)},
+        ]
+        payload: Dict[str, Any] = {
+            "model": self.glm_cfg.model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if tools:
+            payload["tools"] = tools
+
+        import time
+        last_err = None
+        for attempt in range(3):
+            try:
+                resp = requests.post(url, headers=headers, json=payload, timeout=self.glm_cfg.timeout)
+                if resp.status_code in (401, 403):
+                    last_err = requests.exceptions.HTTPError(f"认证失败 ({resp.status_code}): {resp.text}", response=resp)
+                    break
+                resp.raise_for_status()
+                data = resp.json()
+                raw_text = data["choices"][0]["message"].get("content", "").strip()
+                return redact_secrets(raw_text)
+            except Exception as e:
+                last_err = e
+                time.sleep(1.0 * (attempt + 1))
+
+        self.audit.record(
+            tool_name="GlmClient",
+            operation="complete_structured",
+            result_summary=f"请求失败: {last_err}",
+            status="ERROR",
+        )
+        raise RuntimeError(f"GLM complete_structured 请求失败: {last_err}")
+

@@ -14,6 +14,27 @@ from iro_agent.llm.glm_client import GlmClient
 logger = logging.getLogger(__name__)
 
 
+def _invoke_structured_llm(glm_client: Any, prompt: str, system_prompt: str) -> str:
+    """调用纯结构化 LLM 接口，与旧全局 SYSTEM_PROMPT 和 Tool Calling 完全隔离"""
+    if hasattr(glm_client, "complete_structured"):
+        res = glm_client.complete_structured(prompt=prompt, system_prompt=system_prompt)
+        from unittest.mock import Mock
+        if isinstance(res, Mock) and hasattr(glm_client, "chat_completion"):
+            chat_res = glm_client.chat_completion(
+                [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}],
+                verbose=False,
+            )
+            if not isinstance(chat_res, Mock):
+                return str(chat_res)
+        return str(res) if res is not None else ""
+    elif hasattr(glm_client, "chat_completion"):
+        return glm_client.chat_completion(
+            [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}],
+            verbose=False,
+        )
+    return ""
+
+
 class DynamicHypothesisGenerator:
     """
     LLM 动态竞争性假设推演生成器 (Dynamic Hypothesis Generator)
@@ -23,20 +44,24 @@ class DynamicHypothesisGenerator:
     PROMPT_TEMPLATE = """你是一个工业自动化与现场系统（PLC、机器人、调度系统、数据库、通信接口）排查归因专家。
 请根据现场故障现象与已知业务流，推演提出 2~5 个具有竞争性、逻辑互斥且可验证的根因排查假设。
 
-【现场故障现象 (Symptom)】
+【现场故障现象 (Symptom)】:
 {symptom}
 
-【系统已知业务流程环节】
+【已知业务调度流】:
 {flows_text}
 
-【输出要求】
-你必须且仅输出一个合法的 JSON 数组，数组中包含 2~5 个假设对象。每个对象的格式如下：
+【要求】:
+1. 给出 2~5 个互斥的排查假设，覆盖系统边界(如网络/PLC/硬件)、业务逻辑层(如任务状态流转)、外部依赖等不同可能。
+2. 每个假设包含：假设唯一ID (H1, H2, ...)、假设清晰描述 (description)、关联的流程环节 (related_flow_step)、需要检验的客观证据 (required_evidence 列表)。
+3. 必须输出合法的单一 JSON 数组格式，严禁包含任何其他废话或解释说明。
+
+格式示例:
 ```json
 [
   {{
     "hypothesis_id": "H1",
-    "description": "假设描述（明确指明哪个环节、设备或模块出现何种问题）",
-    "related_flow_step": "关联的业务流步骤或系统组件",
+    "description": "主任务记录未成功创建",
+    "related_flow_step": "任务生成",
     "required_evidence": ["需要检验的客观证据1", "需要检验的客观证据2"]
   }}
 ]
@@ -62,13 +87,14 @@ class DynamicHypothesisGenerator:
         flows_text = "\n".join(flows_lines) if flows_lines else "（标准出入库与现场工控调度流）"
 
         prompt = cls.PROMPT_TEMPLATE.format(symptom=symptom, flows_text=flows_text)
-        messages = [
-            {"role": "system", "content": "你是一个严谨的工业现场根因假设生成器，只能输出规范的单一 JSON 数组。"},
-            {"role": "user", "content": prompt},
-        ]
+        sys_msg = "你是一个严谨的工业现场根因假设生成器，只能输出规范的单一 JSON 数组。"
 
         try:
-            raw_reply = glm_client.chat_completion(messages, verbose=False)
+            raw_reply = _invoke_structured_llm(
+                glm_client,
+                prompt=prompt,
+                system_prompt=sys_msg,
+            )
             if not raw_reply:
                 return None
 

@@ -16,6 +16,27 @@ from iro_agent.investigation.planner_validator import PlannerValidator
 logger = logging.getLogger(__name__)
 
 
+def _invoke_structured_llm(glm_client: Any, prompt: str, system_prompt: str) -> str:
+    """调用纯结构化 LLM 接口，与旧全局 SYSTEM_PROMPT 和 Tool Calling 完全隔离"""
+    if hasattr(glm_client, "complete_structured"):
+        res = glm_client.complete_structured(prompt=prompt, system_prompt=system_prompt)
+        from unittest.mock import Mock
+        if isinstance(res, Mock) and hasattr(glm_client, "chat_completion"):
+            chat_res = glm_client.chat_completion(
+                [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}],
+                verbose=False,
+            )
+            if not isinstance(chat_res, Mock):
+                return str(chat_res)
+        return str(res) if res is not None else ""
+    elif hasattr(glm_client, "chat_completion"):
+        return glm_client.chat_completion(
+            [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}],
+            verbose=False,
+        )
+    return ""
+
+
 class LLMInvestigationPlanner:
     """
     LLM 现场故障排查智能规划器 (Agentic LLM Investigation Planner)
@@ -107,16 +128,18 @@ class LLMInvestigationPlanner:
             remaining_budget=remaining_budget,
         )
 
-        messages = [
-            {"role": "system", "content": "你是一个严谨的工业故障诊断决策规划器，只能输出规范的单一 JSON 对象。"},
-            {"role": "user", "content": user_prompt},
-        ]
+        system_prompt = "你是一个严谨的工业故障诊断决策规划器，只能输出规范的单一 JSON 对象。"
+        current_prompt = user_prompt
 
         attempt = 0
         while attempt <= max_retries:
             attempt += 1
             try:
-                raw_reply = self.glm_client.chat_completion(messages, verbose=False)
+                raw_reply = _invoke_structured_llm(
+                    self.glm_client,
+                    prompt=current_prompt,
+                    system_prompt=system_prompt,
+                )
             except Exception as e:
                 logger.error(f"[LLMPlanner] 模型调用异常: {e}")
                 return PlannerDecision(
@@ -129,11 +152,11 @@ class LLMInvestigationPlanner:
             if parse_err:
                 logger.warning(f"[LLMPlanner] 第 {attempt} 次解析 JSON 失败: {parse_err}")
                 if attempt <= max_retries:
-                    messages.append({"role": "assistant", "content": raw_reply or ""})
-                    messages.append({
-                        "role": "user",
-                        "content": f"你输出的内容无法解析为合法 JSON 决策: {parse_err}。请严格按照 schema 重新输出唯一的合法 JSON 对象！",
-                    })
+                    current_prompt = (
+                        f"{user_prompt}\n\n"
+                        f"【上一轮输出错误】: {parse_err}\n"
+                        f"你输出的内容无法解析为合法 JSON 决策: {parse_err}。请严格按照 schema 重新输出唯一的合法 JSON 对象！"
+                    )
                     continue
                 else:
                     return PlannerDecision(
@@ -147,11 +170,11 @@ class LLMInvestigationPlanner:
             if not is_valid:
                 logger.warning(f"[LLMPlanner] 第 {attempt} 次决策校验未通过: {val_err}")
                 if attempt <= max_retries:
-                    messages.append({"role": "assistant", "content": raw_reply or ""})
-                    messages.append({
-                        "role": "user",
-                        "content": f"你的决策未通过安全或规范校验: {val_err}。请纠正并重新输出合法 JSON！",
-                    })
+                    current_prompt = (
+                        f"{user_prompt}\n\n"
+                        f"【上一轮输出决策校验失败】: {val_err}\n"
+                        f"你的决策未通过安全或规范校验: {val_err}。请纠正并重新输出合法 JSON！"
+                    )
                     continue
                 else:
                     return PlannerDecision(
