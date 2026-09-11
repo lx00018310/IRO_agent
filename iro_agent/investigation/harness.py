@@ -214,13 +214,12 @@ class InvestigationHarness:
                         print(f"  [假设生命周期动态更新]: {', '.join(applied)}")
 
                 if decision.error and "PLANNER_ERROR" in decision.error:
-                    # 当大模型不可用或鉴权失败时，平滑降级为确定性排查引擎，后续轮次直接确定性执行
-                    self.planner_mode = "deterministic"
-                    step = EvidencePlanner.select_next_step(state, hypo_mgr, available_tools=self.tool_handlers)
-                    if step is None:
-                        stop_reason = f"大模型调用异常且确定性步骤耗尽: {decision.error}"
-                        state.stop_reason = stop_reason
-                        break
+                    stop_reason = f"PLANNER_ERROR: {decision.error}"
+                    state.stop_reason = stop_reason
+                    state.final_status = "PLANNER_ERROR"
+                    if verbose:
+                        print(f"\n[规划器严重异常终止]: {stop_reason}")
+                    break
                 elif decision.decision == DecisionAction.CONVERGE:
                     stop_reason = decision.reason or decision.thought or "LLM 规划器根据当前证据判定收敛结案"
                     state.stop_reason = stop_reason
@@ -230,13 +229,24 @@ class InvestigationHarness:
                     break
 
                 elif decision.decision == DecisionAction.ESCALATE_PHYSICAL:
-                    stop_reason = decision.reason or decision.thought or "数字事实排查未见异常，LLM 决定升级现场物理排查"
-                    state.stop_reason = stop_reason
-                    state.physical_escalation_required = True
-                    state.final_status = "PHYSICAL_ESCALATION"
-                    if verbose:
-                        print(f"\n[LLM 物理升级]: {stop_reason}")
-                    break
+                    can_escalate, guardrail_reason = PhysicalEscalation.should_escalate(state, hypo_mgr)
+                    if can_escalate:
+                        stop_reason = decision.reason or decision.thought or "数字事实排查未见异常，Harness 批准升级现场物理排查"
+                        state.stop_reason = stop_reason
+                        state.physical_escalation_required = True
+                        state.final_status = "PHYSICAL_ESCALATION"
+                        if verbose:
+                            print(f"\n[Harness 批准物理升级]: {stop_reason}")
+                        break
+                    else:
+                        if verbose:
+                            print(f"\n[Harness 拦截未合规物理升级]: {guardrail_reason}")
+                        state.unknown_factors.append(f"物理升级请求被安全防护拦截: {guardrail_reason}")
+                        stop_reason = f"物理升级未通过安全防护 ({guardrail_reason})，数字取证未收敛且无法升级"
+                        state.stop_reason = stop_reason
+                        state.final_status = "INSUFFICIENT_EVIDENCE"
+                        state.physical_escalation_required = False
+                        break
 
                 elif decision.decision == DecisionAction.GIVE_UP:
                     stop_reason = decision.reason or decision.thought or "LLM 判定无可继续排查路径，放弃排查"
@@ -320,6 +330,15 @@ class InvestigationHarness:
                 evidence=ev_record.model_dump(),
                 hypotheses_after=hypos_after,
                 stop_decision={"should_stop": False, "reason": ""},
+                planner_call_mode="pure_structured_llm" if self.planner_mode == "llm" else "deterministic",
+                hypothesis_updates_requested=[u.model_dump() for u in getattr(decision, "hypothesis_updates", [])] if (self.planner_mode == "llm" and getattr(decision, "hypothesis_updates", None)) else [],
+                hypothesis_updates_applied=applied if (self.planner_mode == "llm" and 'applied' in locals() and applied) else [],
+                selected_tool=step.tool,
+                tool_registered=step.tool in self.tool_handlers,
+                tool_result_availability="OBSERVABILITY_GAP" if ev_record.error_type == "OBSERVABILITY_GAP" else "AVAILABLE",
+                physical_escalation_requested=(self.planner_mode == "llm" and getattr(decision, "decision", None) == DecisionAction.ESCALATE_PHYSICAL),
+                physical_escalation_approved=(state.final_status == "PHYSICAL_ESCALATION"),
+                planner_error=getattr(decision, "error", None) if self.planner_mode == "llm" else None,
             )
 
             if verbose:
@@ -336,13 +355,22 @@ class InvestigationHarness:
         if top_hypo and top_hypo.status in (HypothesisStatus.CONFIRMED, HypothesisStatus.STRONGLY_SUPPORTED):
             primary_cause = top_hypo.description
             confidence = "High" if top_hypo.status == HypothesisStatus.CONFIRMED else "Medium"
+        elif state.final_status == "PLANNER_ERROR":
+            primary_cause = f"排查规划异常: {stop_reason}"
+            confidence = "Low"
+            state.physical_escalation_required = False
+        elif state.final_status == "INSUFFICIENT_EVIDENCE":
+            primary_cause = f"数字证据不足且未收敛 ({stop_reason})"
+            confidence = "Inconclusive"
+            state.physical_escalation_required = False
         else:
             can_escalate, esc_reason = PhysicalEscalation.should_escalate(state, hypo_mgr)
-            if can_escalate or state.physical_escalation_required:
+            if can_escalate:
                 primary_cause = "经多维排查，现有数字事实均无致命异常或已耗尽，高度怀疑现场硬件/物理带外状态异常"
-                confidence = "Inconclusive"
+                confidence = "High"
                 physical_checklist = PhysicalEscalation.generate_checklist(case_type, symptom)
                 state.physical_escalation_required = True
+                state.final_status = "PHYSICAL_ESCALATION"
             else:
                 primary_cause = f"数字证据不足且存在观测缺口 ({esc_reason})，无法得出确凿物理或软件根因"
                 confidence = "Inconclusive"
@@ -368,10 +396,13 @@ class InvestigationHarness:
             hypotheses=hypo_mgr.hypotheses,
             primary_root_cause=primary_cause,
             confidence=confidence,
+            final_status=state.final_status,
             key_evidence=key_evidence,
             investigation_trace=executed_steps,
             physical_escalation_checklist=physical_checklist,
+            physical_escalation_required=state.physical_escalation_required,
             stop_reason=stop_reason,
+            unknown_factors=state.unknown_factors,
             evidence_records=state.evidence,
         )
 

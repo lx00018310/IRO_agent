@@ -15,6 +15,17 @@ class TraceIteration(BaseModel):
     hypotheses_after: List[Dict[str, Any]] = Field(default_factory=list)
     stop_decision: Dict[str, Any] = Field(default_factory=dict)
 
+    planner_call_mode: Optional[str] = None
+    hypothesis_updates_requested: List[Dict[str, Any]] = Field(default_factory=list)
+    hypothesis_updates_applied: List[str] = Field(default_factory=list)
+    hypothesis_updates_rejected: List[str] = Field(default_factory=list)
+    selected_tool: Optional[str] = None
+    tool_registered: bool = True
+    tool_result_availability: str = "AVAILABLE"
+    physical_escalation_requested: bool = False
+    physical_escalation_approved: bool = False
+    planner_error: Optional[str] = None
+
 
 class InvestigationTrace(BaseModel):
     """全生命周期排查轨迹捕获器 (Investigation Trace)"""
@@ -35,6 +46,7 @@ class InvestigationTrace(BaseModel):
         evidence: Optional[Dict[str, Any]],
         hypotheses_after: List[Dict[str, Any]],
         stop_decision: Dict[str, Any],
+        **kwargs: Any,
     ) -> None:
         """记录一轮完整的决策取证演变"""
         self.iterations.append(
@@ -49,6 +61,7 @@ class InvestigationTrace(BaseModel):
                 evidence=evidence,
                 hypotheses_after=hypotheses_after,
                 stop_decision=stop_decision,
+                **kwargs,
             )
         )
 

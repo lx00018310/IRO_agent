@@ -37,6 +37,13 @@ class InvestigationState(BaseModel):
     final_status: str = "IN_PROGRESS"  # IN_PROGRESS, CONVERGED, STOPPED, FAILED, TIMEOUT
 
     physical_escalation_required: bool = False
+    unknown_factors: List[str] = Field(default_factory=list)
+    rejected_escalations: List[str] = Field(default_factory=list)
+
+    def record_rejected_escalation(self, reason: str) -> None:
+        """记录被安全防护拦截的物理升级请求"""
+        self.rejected_escalations.append(reason)
+        self.unknown_factors.append(f"物理升级请求被拦截: {reason}")
 
     def add_evidence(self, record: EvidenceRecord) -> None:
         """追加一条客观证据记录"""
