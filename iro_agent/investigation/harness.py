@@ -22,6 +22,7 @@ from iro_agent.investigation.models import (
     EvidenceTier,
     DecisionAction,
     PlannerDecision,
+    HypothesisAction,
 )
 from iro_agent.investigation.state import InvestigationState
 from iro_agent.investigation.trace import InvestigationTrace
