@@ -25,10 +25,14 @@ class ToolRegistry:
         r";\s*(insert|update|delete|drop|alter)",
     ]
 
-    def __init__(self, register_defaults: bool = True):
+    def __init__(self, register_defaults: bool = True, include_legacy_pipelines: bool = False):
         self._tools: Dict[str, ToolSpec] = {}
         if register_defaults:
-            self._register_default_tools()
+            self._register_default_tools(include_legacy_pipelines=include_legacy_pipelines)
+
+    def unregister(self, name: str) -> None:
+        """从注册表中注销工具"""
+        self._tools.pop(name, None)
 
     def register(self, spec: ToolSpec) -> None:
         """注册工具（强制校验风险级别必须为 READ_ONLY）"""
@@ -110,7 +114,7 @@ class ToolRegistry:
                 lines.append(f"  参数: {{{', '.join(param_strs)}}}")
         return "\n".join(lines)
 
-    def _register_default_tools(self) -> None:
+    def _register_default_tools(self, include_legacy_pipelines: bool = False) -> None:
         """注册工业现场标准只读安全工具"""
         self.register(ToolSpec(
             name="log_search",
@@ -155,14 +159,15 @@ class ToolRegistry:
             tier=EvidenceTier.TIER_2_SYSTEM_BOUNDARY,
         ))
         self.register(ToolSpec(
-            name="diagnostic_pipeline",
-            description="运行内建多维只读日志关联分析流水线",
-            parameters_schema={"symptom": "str, 必填, 故障症状描述"},
-            tier=EvidenceTier.TIER_1A_RUNTIME_DIGITAL,
-        ))
-        self.register(ToolSpec(
             name="web_fetch",
             description="只读获取内部微服务或硬件设备 HTTP 只读接口",
             parameters_schema={"url": "str, 必填, 必须为只读 GET 请求"},
             tier=EvidenceTier.TIER_2_SYSTEM_BOUNDARY,
         ))
+        if include_legacy_pipelines:
+            self.register(ToolSpec(
+                name="diagnostic_pipeline",
+                description="运行内建多维只读日志关联分析流水线",
+                parameters_schema={"symptom": "str, 必填, 故障症状描述"},
+                tier=EvidenceTier.TIER_1A_RUNTIME_DIGITAL,
+            ))

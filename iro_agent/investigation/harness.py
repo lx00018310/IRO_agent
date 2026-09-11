@@ -64,9 +64,6 @@ class InvestigationHarness:
         self.lookup_engine = ProjectLookupEngine(store=self.knowledge_store)
         self.orchestrator = DiagnosticOrchestrator(audit_logger=self.audit)
 
-        self.tool_handlers = tool_handlers or self._build_default_tools()
-        self.tool_registry = tool_registry or ToolRegistry()
-
         # 智能探测 LLM 运行条件：若未提供有效 client 或凭据未配置/格式无效，安全静默降级为确定性模式
         glm_cfg = getattr(self.config, "glm", None)
         api_key = getattr(glm_cfg, "api_key", "") if glm_cfg else ""
@@ -79,6 +76,9 @@ class InvestigationHarness:
             self.planner_mode = "deterministic"
         else:
             self.planner_mode = planner_mode
+
+        self.tool_handlers = tool_handlers or self._build_default_tools()
+        self.tool_registry = tool_registry or ToolRegistry(include_legacy_pipelines=(self.planner_mode == "deterministic"))
 
         if self.planner_mode == "llm":
             self.dynamic_hypotheses = True
@@ -104,17 +104,25 @@ class InvestigationHarness:
         v_reader, _ = VersionReaderResolver.resolve(config=self.config, audit_logger=self.audit)
         web_reader = WebReader(audit_logger=self.audit)
 
-        return {
+        tools: Dict[str, Callable] = {
             "log_search": lambda **kwargs: log_reader.search_logs(**kwargs),
             "db_query": lambda **kwargs: db_reader.execute_query(**kwargs),
             "config_lookup": lambda query, limit=5: self.lookup_engine.config_lookup(query, limit=limit),
             "project_lookup": lambda query: self.lookup_engine.lookup(query),
             "version_current": lambda: v_reader.get_current_version() if v_reader else {"version": "UNKNOWN"},
-            "diagnostic_pipeline": lambda symptom: self.orchestrator.run_pipeline(symptom=symptom),
             "web_fetch": lambda **kwargs: web_reader.fetch_page(**kwargs),
-            "plc_read": lambda **kwargs: {"status": "READ_SUCCESS", "address": kwargs.get("address"), "val": 0},
-            "robot_query": lambda **kwargs: {"status": "ONLINE", "alarm": None, "state": "STANDBY"},
+            "plc_read": lambda **kwargs: {
+                "status": "UNAVAILABLE",
+                "error": "PLC reader adapter is not configured in current environment: observability_gap",
+            },
+            "robot_query": lambda **kwargs: {
+                "status": "UNAVAILABLE",
+                "error": "Robot query adapter is not configured in current environment: observability_gap",
+            },
         }
+        if getattr(self, "planner_mode", None) == "deterministic":
+            tools["diagnostic_pipeline"] = lambda symptom: self.orchestrator.run_pipeline(symptom=symptom)
+        return tools
 
     def investigate(self, symptom: str, verbose: bool = False) -> InvestigationReport:
         """端到端假设驱动现场故障排查流水线 (迭代式 Next-Best-Evidence 逐轮重规划智能闭环)"""
