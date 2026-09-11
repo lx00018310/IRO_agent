@@ -44,5 +44,20 @@
   "storage": {
     "audit_db_path": "iro_agent_audit.db",
     "memory_db_path": "iro_agent_memory.db"
+  },
+  "investigation": {
+    "max_iterations": 10,
+    "max_tool_calls": 12,
+    "max_no_gain_rounds": 2,
+    "physical_escalation_enabled": true
+  },
+  "bootstrap": {
+    "max_rounds": 12,
+    "min_coverage_gain": 0.03,
+    "max_no_gain_rounds": 2
+  },
+  "evaluation": {
+    "save_trajectory": true,
+    "repeat_count": 1
   }
 }

@@ -45,6 +45,24 @@ class StorageConfig(BaseModel):
     memory_db_path: str = "iro_agent_memory.db"
 
 
+class InvestigationConfig(BaseModel):
+    max_iterations: int = 10
+    max_tool_calls: int = 12
+    max_no_gain_rounds: int = 2
+    physical_escalation_enabled: bool = True
+
+
+class BootstrapConfig(BaseModel):
+    max_rounds: int = 12
+    min_coverage_gain: float = 0.03
+    max_no_gain_rounds: int = 2
+
+
+class EvaluationConfig(BaseModel):
+    save_trajectory: bool = True
+    repeat_count: int = 1
+
+
 class IROConfig(BaseModel):
     project_name: str = "TASK-013"
     project_root: str = "D:/当前工作/维力智能设备/TASK-013_武汉自动上车显示屏"
@@ -62,6 +80,9 @@ class IROConfig(BaseModel):
     feishu: FeishuConfig = Field(default_factory=FeishuConfig)
     project_mapping: ProjectMappingConfig = Field(default_factory=ProjectMappingConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
+    investigation: InvestigationConfig = Field(default_factory=InvestigationConfig)
+    bootstrap: BootstrapConfig = Field(default_factory=BootstrapConfig)
+    evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
 
     def get_effective_allowed_paths(self) -> List[str]:
         """返回规范化后的允许访问只读目录列表"""
