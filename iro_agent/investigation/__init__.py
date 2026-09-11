@@ -6,7 +6,10 @@ from iro_agent.investigation.models import (
     InvestigationStep,
     EvidenceEvaluationResult,
     InvestigationReport,
+    EvidenceRecord,
 )
+from iro_agent.investigation.state import InvestigationState
+from iro_agent.investigation.trace import InvestigationTrace, TraceIteration
 from iro_agent.investigation.classifier import InvestigationCaseClassifier
 from iro_agent.investigation.hypotheses import HypothesisManager
 from iro_agent.investigation.priorities import PriorityCalculator
@@ -24,6 +27,10 @@ __all__ = [
     "InvestigationStep",
     "EvidenceEvaluationResult",
     "InvestigationReport",
+    "EvidenceRecord",
+    "InvestigationState",
+    "InvestigationTrace",
+    "TraceIteration",
     "InvestigationCaseClassifier",
     "HypothesisManager",
     "PriorityCalculator",

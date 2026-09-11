@@ -61,6 +61,29 @@ class InvestigationStep(BaseModel):
     evaluation: Optional[str] = None  # FACT, SUPPORTING, CONTRADICTING, INCONCLUSIVE, MISSING
 
 
+class EvidenceRecord(BaseModel):
+    """客观结构化证据记录 (严禁将用户主观 Symptom/Allegation 直接作为事实证据)"""
+    evidence_id: str
+    source_type: str
+    source_name: str
+    tier: EvidenceTier
+
+    query: Dict[str, Any] = Field(default_factory=dict)
+    raw_summary: str = ""
+
+    timestamp: Optional[str] = None
+    reliability: float = 1.0
+    relevance: float = 1.0
+
+    supports: List[str] = Field(default_factory=list)
+    contradicts: List[str] = Field(default_factory=list)
+
+    is_error: bool = False
+    error_type: Optional[str] = None
+
+    provenance: Dict[str, Any] = Field(default_factory=dict)
+
+
 class EvidenceEvaluationResult(BaseModel):
     """证据单项评估结果"""
     step_id: str
@@ -80,3 +103,5 @@ class InvestigationReport(BaseModel):
     investigation_trace: List[InvestigationStep] = Field(default_factory=list)
     physical_escalation_checklist: List[str] = Field(default_factory=list)
     stop_reason: str = ""
+    evidence_records: List[EvidenceRecord] = Field(default_factory=list)
+
