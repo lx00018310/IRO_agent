@@ -11,6 +11,13 @@ def test_new_evidence_changes_next_tool_path():
     # 轮次 1: 发现问题后决定先查日志
     # 轮次 2: 看到日志中的 PLC Connection refused 后，模型自主转向读取 PLC
     mock_glm.chat_completion.side_effect = [
+        # Round 0 Dynamic Hypothesis Generation
+        """```json
+[
+  {"hypothesis_id": "H1", "description": "排查机器人运行初始异常", "related_flow_step": "机器人运行", "required_evidence": ["log_search"]},
+  {"hypothesis_id": "H2", "description": "排查PLC通信点位状态", "related_flow_step": "PLC交互", "required_evidence": ["plc_read"]}
+]
+```""",
         # Round 1 Planner Decision
         """```json
 {

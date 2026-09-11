@@ -8,6 +8,12 @@ def test_unknown_fault_agentic_planning_and_convergence():
     mock_glm = MagicMock()
     # 模拟面对一个完全没有在任何规则库里出现过的新奇异常
     mock_glm.chat_completion.side_effect = [
+        # Round 0 Dynamic Hypothesis Generation
+        """```json
+[
+  {"hypothesis_id": "H1", "description": "视觉相机失焦与曝光异常", "related_flow_step": "视觉分拣", "required_evidence": ["log_search"]}
+]
+```""",
         # LLM Planner Step 1
         """```json
 {

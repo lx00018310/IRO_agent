@@ -10,6 +10,13 @@ def test_same_symptom_different_evidence_branching():
     # 情况 A: 第一步日志发现 DB 锁等待 -> 第二步转向 db_query
     glm_case_a = MagicMock()
     glm_case_a.chat_completion.side_effect = [
+        # Dynamic Hypothesis Generation
+        """```json
+[
+  {"hypothesis_id": "H1", "description": "出库主任务阻塞", "related_flow_step": "出库调度", "required_evidence": ["log_search"]},
+  {"hypothesis_id": "H2", "description": "数据库行锁冲突", "related_flow_step": "数据库事务", "required_evidence": ["db_query"]}
+]
+```""",
         """```json
 {"thought": "先查日志", "decision": "EXECUTE_TOOL", "target_hypothesis": "H1", "tool_name": "log_search", "tool_arguments": {"keyword": "dock_task"}, "reason": "看日志"}
 ```""",
@@ -36,6 +43,13 @@ def test_same_symptom_different_evidence_branching():
     # 情况 B: 第一步日志发现机器人未就绪 -> 第二步转向 robot_query
     glm_case_b = MagicMock()
     glm_case_b.chat_completion.side_effect = [
+        # Dynamic Hypothesis Generation
+        """```json
+[
+  {"hypothesis_id": "H1", "description": "出库主任务阻塞", "related_flow_step": "出库调度", "required_evidence": ["log_search"]},
+  {"hypothesis_id": "H3", "description": "机器人硬件报警未就绪", "related_flow_step": "机器人执行", "required_evidence": ["robot_query"]}
+]
+```""",
         """```json
 {"thought": "先查日志", "decision": "EXECUTE_TOOL", "target_hypothesis": "H1", "tool_name": "log_search", "tool_arguments": {"keyword": "dock_task"}, "reason": "看日志"}
 ```""",

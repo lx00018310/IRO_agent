@@ -141,8 +141,10 @@ class HypothesisManager:
 
             if dynamic_hypos:
                 self.hypotheses = dynamic_hypos
+                self.source = "llm_dynamic"
             else:
                 self.hypotheses = self._generate_fallback_hypotheses()
+                self.source = "deterministic_template"
 
     @property
     def active_hypotheses(self) -> List[Hypothesis]:

@@ -52,7 +52,7 @@ class InvestigationHarness:
         llm_planner: Optional[LLMInvestigationPlanner] = None,
         glm_client: Optional[GlmClient] = None,
         tool_registry: Optional[ToolRegistry] = None,
-        dynamic_hypotheses: bool = False,
+        dynamic_hypotheses: bool = True,
     ):
         self.config = get_config()
         self.audit = audit_logger or AuditLogger()
@@ -66,8 +66,6 @@ class InvestigationHarness:
 
         self.tool_handlers = tool_handlers or self._build_default_tools()
         self.tool_registry = tool_registry or ToolRegistry()
-        self.glm_client = glm_client
-        self.dynamic_hypotheses = dynamic_hypotheses
 
         # 智能探测 LLM 运行条件：若未提供有效 client 或凭据未配置/格式无效，安全静默降级为确定性模式
         glm_cfg = getattr(self.config, "glm", None)
@@ -83,11 +81,21 @@ class InvestigationHarness:
             self.planner_mode = planner_mode
 
         if self.planner_mode == "llm":
+            self.dynamic_hypotheses = True
+            if glm_client:
+                self.glm_client = glm_client
+            elif llm_planner and getattr(llm_planner, "glm_client", None):
+                self.glm_client = llm_planner.glm_client
+            else:
+                self.glm_client = GlmClient(audit_logger=self.audit)
+
             self.llm_planner = llm_planner or LLMInvestigationPlanner(
                 glm_client=self.glm_client,
                 registry=self.tool_registry,
             )
         else:
+            self.dynamic_hypotheses = dynamic_hypotheses
+            self.glm_client = glm_client
             self.llm_planner = None
 
     def _build_default_tools(self) -> Dict[str, Callable]:
