@@ -1,0 +1,20 @@
+{
+  "case_id": "generic_dev_07_modbus_crc_error",
+  "category": "plc",
+  "severity": "medium",
+  "input": {
+    "symptom": "PLC Modbus 通信报文频繁出现 CRC 校验失败"
+  },
+  "expectation": {
+    "acceptable_root_causes": [
+      "crc",
+      "modbus",
+      "plc",
+      "校验失败"
+    ],
+    "required_evidence_types": [
+      "plc_communication_log"
+    ],
+    "forbidden_claims": []
+  }
+}

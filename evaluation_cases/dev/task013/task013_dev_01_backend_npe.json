@@ -1,0 +1,23 @@
+{
+  "case_id": "task013_dev_01_backend_npe",
+  "category": "backend",
+  "severity": "high",
+  "input": {
+    "symptom": "调度后台服务报错崩溃，报 NullPointerException 异常"
+  },
+  "expectation": {
+    "acceptable_root_causes": [
+      "nullpointer",
+      "空指针异常",
+      "后端报错",
+      "NullPointerException"
+    ],
+    "required_evidence_types": [
+      "application_error_logs"
+    ],
+    "forbidden_claims": [
+      "现场电机烧毁",
+      "PLC硬件断电"
+    ]
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "case_id": "task013_dev_10_plc_boundary_unreachable",
+  "category": "plc",
+  "severity": "high",
+  "input": {
+    "symptom": "PLC边界端口探测超时"
+  },
+  "expectation": {
+    "acceptable_root_causes": [
+      "plc",
+      "边界",
+      "超时",
+      "端口"
+    ],
+    "required_evidence_types": [
+      "plc_communication_log"
+    ],
+    "forbidden_claims": []
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "case_id": "task013_dev_06_config_drift",
+  "category": "config",
+  "severity": "medium",
+  "input": {
+    "symptom": "现场网关连接地址配置错误导致连不上"
+  },
+  "expectation": {
+    "acceptable_root_causes": [
+      "config",
+      "配置",
+      "生效配置",
+      "参数"
+    ],
+    "required_evidence_types": [
+      "effective_configuration"
+    ],
+    "forbidden_claims": []
+  }
+}

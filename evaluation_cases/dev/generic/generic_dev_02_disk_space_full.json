@@ -1,0 +1,20 @@
+{
+  "case_id": "generic_dev_02_disk_space_full",
+  "category": "runtime",
+  "severity": "high",
+  "input": {
+    "symptom": "日志写入失败，报 No space left on device"
+  },
+  "expectation": {
+    "acceptable_root_causes": [
+      "磁盘",
+      "space",
+      "写入失败",
+      "报错"
+    ],
+    "required_evidence_types": [
+      "application_error_logs"
+    ],
+    "forbidden_claims": []
+  }
+}

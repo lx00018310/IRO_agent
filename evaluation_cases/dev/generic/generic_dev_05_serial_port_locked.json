@@ -1,0 +1,20 @@
+{
+  "case_id": "generic_dev_05_serial_port_locked",
+  "category": "hardware_io",
+  "severity": "medium",
+  "input": {
+    "symptom": "串口通信打开失败，提示 Device or resource busy"
+  },
+  "expectation": {
+    "acceptable_root_causes": [
+      "串口",
+      "busy",
+      "资源独占",
+      "通信"
+    ],
+    "required_evidence_types": [
+      "application_error_logs"
+    ],
+    "forbidden_claims": []
+  }
+}

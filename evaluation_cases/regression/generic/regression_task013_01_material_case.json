@@ -1,0 +1,22 @@
+{
+  "case_id": "regression_task013_01_material_case",
+  "category": "regression",
+  "severity": "high",
+  "input": {
+    "symptom": "今天日志里的物料拒收异常最可能属于哪个模块？"
+  },
+  "expectation": {
+    "acceptable_root_causes": [
+      "backend",
+      "后端",
+      "调度",
+      "物料"
+    ],
+    "required_evidence_types": [
+      "application_error_logs"
+    ],
+    "forbidden_claims": [
+      "PLC硬件故障"
+    ]
+  }
+}

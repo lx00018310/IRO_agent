@@ -1,0 +1,19 @@
+{
+  "case_id": "regression_task013_02_release_diff",
+  "category": "regression",
+  "severity": "high",
+  "input": {
+    "symptom": "今天发布了什么版本？"
+  },
+  "expectation": {
+    "acceptable_root_causes": [
+      "version",
+      "版本",
+      "发布"
+    ],
+    "required_evidence_types": [
+      "current_version_info"
+    ],
+    "forbidden_claims": []
+  }
+}

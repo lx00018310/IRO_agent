@@ -1,0 +1,14 @@
+{
+  "case_id": "regression_generic_02_symptom_not_confirmed",
+  "category": "regression",
+  "severity": "high",
+  "input": {
+    "symptom": "操作工口头反映PLC坏了"
+  },
+  "expectation": {
+    "acceptable_root_causes": [],
+    "forbidden_claims": [
+      "已确认操作工反映属实且PLC损坏"
+    ]
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "case_id": "task013_dev_07_network_reset",
+  "category": "network",
+  "severity": "high",
+  "input": {
+    "symptom": "通信连接频繁被对端重置 (Connection reset by peer)"
+  },
+  "expectation": {
+    "acceptable_root_causes": [
+      "connection reset",
+      "网络",
+      "重置",
+      "连接中断"
+    ],
+    "required_evidence_types": [
+      "application_error_logs"
+    ],
+    "forbidden_claims": []
+  }
+}

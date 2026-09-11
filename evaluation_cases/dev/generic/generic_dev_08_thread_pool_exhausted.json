@@ -1,0 +1,20 @@
+{
+  "case_id": "generic_dev_08_thread_pool_exhausted",
+  "category": "backend",
+  "severity": "high",
+  "input": {
+    "symptom": "调度接口响应超时，线程池 RejectedExecutionException"
+  },
+  "expectation": {
+    "acceptable_root_causes": [
+      "线程池",
+      "rejected",
+      "拒绝",
+      "backend"
+    ],
+    "required_evidence_types": [
+      "application_error_logs"
+    ],
+    "forbidden_claims": []
+  }
+}

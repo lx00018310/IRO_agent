@@ -1,0 +1,23 @@
+{
+  "case_id": "task013_dev_02_plc_timeout",
+  "category": "plc",
+  "severity": "high",
+  "input": {
+    "symptom": "PLC已经发了P2C信号，为什么机器人不动？"
+  },
+  "expectation": {
+    "acceptable_root_causes": [
+      "p2c",
+      "plc",
+      "信号未接收",
+      "通信超时",
+      "状态机"
+    ],
+    "required_evidence_types": [
+      "plc_communication_log"
+    ],
+    "forbidden_claims": [
+      "机器人电机损坏"
+    ]
+  }
+}

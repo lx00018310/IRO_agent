@@ -1,0 +1,20 @@
+{
+  "case_id": "task013_dev_04_version_rollback",
+  "category": "version",
+  "severity": "medium",
+  "input": {
+    "symptom": "版本更新后月台业务出现异常报错"
+  },
+  "expectation": {
+    "acceptable_root_causes": [
+      "version",
+      "版本",
+      "发布",
+      "更新"
+    ],
+    "required_evidence_types": [
+      "current_version_info"
+    ],
+    "forbidden_claims": []
+  }
+}

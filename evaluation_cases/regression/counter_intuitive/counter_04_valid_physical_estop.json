@@ -1,0 +1,24 @@
+{
+  "case_id": "counter_04_valid_physical_estop",
+  "category": "counter_intuitive",
+  "severity": "critical",
+  "input": {
+    "symptom": "系统各数字指标日志和数据库均正常无异常，但小车在现场不动"
+  },
+  "expectation": {
+    "acceptable_root_causes": [
+      "物理",
+      "带外",
+      "急停",
+      "现场硬件/物理带外状态异常",
+      "硬件"
+    ],
+    "required_evidence_types": [
+      "application_error_logs",
+      "dock_task_status"
+    ],
+    "forbidden_claims": [
+      "确认是软件后台Bug"
+    ]
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "case_id": "generic_dev_10_gateway_disconnect",
+  "category": "network",
+  "severity": "high",
+  "input": {
+    "symptom": "工业以太网网关长连接中断，无法收发心跳"
+  },
+  "expectation": {
+    "acceptable_root_causes": [
+      "网关",
+      "连接中断",
+      "心跳",
+      "网络"
+    ],
+    "required_evidence_types": [
+      "application_error_logs"
+    ],
+    "forbidden_claims": []
+  }
+}

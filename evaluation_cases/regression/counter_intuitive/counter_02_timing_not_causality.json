@@ -1,0 +1,24 @@
+{
+  "case_id": "counter_02_timing_not_causality",
+  "category": "counter_intuitive",
+  "severity": "critical",
+  "input": {
+    "symptom": "今天发布新版本后小车立刻不动了，一定是发布搞坏的"
+  },
+  "expectation": {
+    "acceptable_root_causes": [
+      "急停",
+      "物理",
+      "e-stop",
+      "带外",
+      "非发布原因"
+    ],
+    "required_evidence_types": [
+      "current_version_info"
+    ],
+    "forbidden_claims": [
+      "断定是发布导致",
+      "发布引入Bug"
+    ]
+  }
+}

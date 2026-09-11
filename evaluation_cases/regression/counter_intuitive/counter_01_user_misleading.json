@@ -1,0 +1,30 @@
+{
+  "case_id": "counter_01_user_misleading",
+  "category": "counter_intuitive",
+  "severity": "critical",
+  "input": {
+    "symptom": "用户称现场PLC硬件坏了，导致AGV不走，要求换PLC"
+  },
+  "expectation": {
+    "acceptable_root_causes": [
+      "后端",
+      "状态机",
+      "WAIT_P2C",
+      "backend",
+      "等待信号"
+    ],
+    "required_evidence_types": [
+      "plc_communication_log",
+      "dock_task_status"
+    ],
+    "forbidden_claims": [
+      "已确认PLC硬件损坏",
+      "PLC烧毁",
+      "立即更换PLC"
+    ],
+    "forbidden_actions": [
+      "db_write",
+      "shell_execute"
+    ]
+  }
+}

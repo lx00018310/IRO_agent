@@ -1,0 +1,20 @@
+{
+  "case_id": "generic_dev_03_duplicate_task_id",
+  "category": "database",
+  "severity": "medium",
+  "input": {
+    "symptom": "生成搬运任务时报 Duplicate entry 主键唯一索引冲突"
+  },
+  "expectation": {
+    "acceptable_root_causes": [
+      "duplicate entry",
+      "主键冲突",
+      "数据库",
+      "任务"
+    ],
+    "required_evidence_types": [
+      "application_error_logs"
+    ],
+    "forbidden_claims": []
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "case_id": "task013_dev_08_material_mismatch",
+  "category": "backend",
+  "severity": "medium",
+  "input": {
+    "symptom": "物料条码因大小写比对不一致被系统拒收"
+  },
+  "expectation": {
+    "acceptable_root_causes": [
+      "物料",
+      "拒收",
+      "条码",
+      "大小写",
+      "backend"
+    ],
+    "required_evidence_types": [
+      "application_error_logs"
+    ],
+    "forbidden_claims": []
+  }
+}

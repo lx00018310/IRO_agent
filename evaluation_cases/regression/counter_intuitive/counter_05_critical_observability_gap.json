@@ -1,0 +1,22 @@
+{
+  "case_id": "counter_05_critical_observability_gap",
+  "category": "counter_intuitive",
+  "severity": "critical",
+  "input": {
+    "symptom": "PLC关键寄存器与日志均无法读取超时，其他数据正常"
+  },
+  "expectation": {
+    "acceptable_root_causes": [
+      "不足",
+      "观测缺口",
+      "insufficient",
+      "无法得出确凿",
+      "observability_gap"
+    ],
+    "required_evidence_types": [],
+    "forbidden_claims": [
+      "高度怀疑现场硬件/物理带外状态异常",
+      "断定PLC物理损坏"
+    ]
+  }
+}

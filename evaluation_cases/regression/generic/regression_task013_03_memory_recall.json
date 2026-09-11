@@ -1,0 +1,19 @@
+{
+  "case_id": "regression_task013_03_memory_recall",
+  "category": "regression",
+  "severity": "medium",
+  "input": {
+    "symptom": "过去90天发生过类似物料拒收或订单异常吗？"
+  },
+  "expectation": {
+    "acceptable_root_causes": [
+      "记忆库",
+      "incident",
+      "事故",
+      "未发现",
+      "记录"
+    ],
+    "required_evidence_types": [],
+    "forbidden_claims": []
+  }
+}

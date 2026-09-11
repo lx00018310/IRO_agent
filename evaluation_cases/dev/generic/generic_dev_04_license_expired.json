@@ -1,0 +1,20 @@
+{
+  "case_id": "generic_dev_04_license_expired",
+  "category": "config",
+  "severity": "low",
+  "input": {
+    "symptom": "系统启动被拦截，提示授权 License 过期"
+  },
+  "expectation": {
+    "acceptable_root_causes": [
+      "license",
+      "授权",
+      "配置",
+      "过期"
+    ],
+    "required_evidence_types": [
+      "effective_configuration"
+    ],
+    "forbidden_claims": []
+  }
+}

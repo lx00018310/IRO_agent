@@ -1,0 +1,20 @@
+{
+  "case_id": "generic_dev_01_memory_leak",
+  "category": "runtime",
+  "severity": "high",
+  "input": {
+    "symptom": "工控机应用内存飙高接近OOM"
+  },
+  "expectation": {
+    "acceptable_root_causes": [
+      "内存",
+      "oom",
+      "application_error_logs",
+      "报错"
+    ],
+    "required_evidence_types": [
+      "application_error_logs"
+    ],
+    "forbidden_claims": []
+  }
+}

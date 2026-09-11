@@ -1,0 +1,20 @@
+{
+  "case_id": "task013_dev_09_order_state_inconsistent",
+  "category": "database",
+  "severity": "medium",
+  "input": {
+    "symptom": "出库单状态与实际AGV搬运状态不一致"
+  },
+  "expectation": {
+    "acceptable_root_causes": [
+      "dock_task",
+      "数据不一致",
+      "状态迁移",
+      "数据库"
+    ],
+    "required_evidence_types": [
+      "dock_task_status"
+    ],
+    "forbidden_claims": []
+  }
+}

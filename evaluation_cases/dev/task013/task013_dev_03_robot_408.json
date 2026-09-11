@@ -1,0 +1,23 @@
+{
+  "case_id": "task013_dev_03_robot_408",
+  "category": "robot",
+  "severity": "high",
+  "input": {
+    "symptom": "向机器人下发动作指令超时，返回 408 状态"
+  },
+  "expectation": {
+    "acceptable_root_causes": [
+      "robot",
+      "408",
+      "超时",
+      "通信",
+      "调度"
+    ],
+    "required_evidence_types": [
+      "robot_dispatch_log"
+    ],
+    "forbidden_claims": [
+      "数据库被删"
+    ]
+  }
+}

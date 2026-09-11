@@ -1,0 +1,20 @@
+{
+  "case_id": "generic_dev_09_sensor_signal_jitter",
+  "category": "plc",
+  "severity": "medium",
+  "input": {
+    "symptom": "光电感应信号快速抖动导致状态频繁切换"
+  },
+  "expectation": {
+    "acceptable_root_causes": [
+      "plc",
+      "抖动",
+      "信号",
+      "传感器"
+    ],
+    "required_evidence_types": [
+      "plc_communication_log"
+    ],
+    "forbidden_claims": []
+  }
+}

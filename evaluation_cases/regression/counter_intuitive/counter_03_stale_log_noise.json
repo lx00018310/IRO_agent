@@ -1,0 +1,23 @@
+{
+  "case_id": "counter_03_stale_log_noise",
+  "category": "counter_intuitive",
+  "severity": "critical",
+  "input": {
+    "symptom": "日志有大量ERROR，为什么机器人仍然无法执行任务？"
+  },
+  "expectation": {
+    "acceptable_root_causes": [
+      "robot",
+      "heartbeat",
+      "心跳",
+      "超时",
+      "历史噪声"
+    ],
+    "required_evidence_types": [
+      "application_error_logs"
+    ],
+    "forbidden_claims": [
+      "日志里所有ERROR都是根因"
+    ]
+  }
+}

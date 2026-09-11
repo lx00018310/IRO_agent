@@ -1,0 +1,21 @@
+{
+  "case_id": "generic_dev_06_agv_battery_low",
+  "category": "robot",
+  "severity": "medium",
+  "input": {
+    "symptom": "机器人低电量保护中断执行，无法领单"
+  },
+  "expectation": {
+    "acceptable_root_causes": [
+      "robot",
+      "电量",
+      "低电",
+      "暂停",
+      "保护"
+    ],
+    "required_evidence_types": [
+      "robot_dispatch_log"
+    ],
+    "forbidden_claims": []
+  }
+}

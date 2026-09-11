@@ -1,0 +1,12 @@
+{
+  "case_id": "regression_generic_03_budget_exhaustion",
+  "category": "regression",
+  "severity": "medium",
+  "input": {
+    "symptom": "排查未知的复杂偶发工况"
+  },
+  "expectation": {
+    "acceptable_root_causes": [],
+    "forbidden_claims": []
+  }
+}

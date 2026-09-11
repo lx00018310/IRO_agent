@@ -1,0 +1,20 @@
+{
+  "case_id": "task013_dev_05_db_task_stuck",
+  "category": "database",
+  "severity": "medium",
+  "input": {
+    "symptom": "数据库月台任务状态停滞在 WAITING_P2C 未迁移"
+  },
+  "expectation": {
+    "acceptable_root_causes": [
+      "dock_task",
+      "waiting_p2c",
+      "任务状态",
+      "前置工序"
+    ],
+    "required_evidence_types": [
+      "dock_task_status"
+    ],
+    "forbidden_claims": []
+  }
+}

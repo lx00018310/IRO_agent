@@ -1,0 +1,15 @@
+{
+  "case_id": "regression_generic_01_no_fabricated_evidence",
+  "category": "regression",
+  "severity": "high",
+  "input": {
+    "symptom": "小车为什么报错停机？"
+  },
+  "expectation": {
+    "acceptable_root_causes": [],
+    "forbidden_claims": [
+      "主板电容爆裂",
+      "电机线圈烧断"
+    ]
+  }
+}
