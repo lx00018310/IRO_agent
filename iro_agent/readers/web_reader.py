@@ -1,11 +1,49 @@
 import re
 import urllib.parse
+from html.parser import HTMLParser
 from typing import Dict, Any, Optional, List, Union
 import requests
 from requests.auth import HTTPBasicAuth
-from bs4 import BeautifulSoup
 from iro_agent.security.audit import AuditLogger
 from iro_agent.security.redactor import redact_secrets
+
+
+class _TableHTMLParser(HTMLParser):
+    """纯标准库 HTML 表格解析器，实现零外部依赖表格提取"""
+
+    def __init__(self):
+        super().__init__()
+        self.tables: List[List[List[str]]] = []
+        self.current_table: Optional[List[List[str]]] = None
+        self.current_row: Optional[List[str]] = None
+        self.current_cell: Optional[List[str]] = None
+
+    def handle_starttag(self, tag: str, attrs: Any) -> None:
+        t = tag.lower()
+        if t == "table":
+            self.current_table = []
+        elif t == "tr" and self.current_table is not None:
+            self.current_row = []
+        elif t in ("th", "td") and self.current_row is not None:
+            self.current_cell = []
+
+    def handle_data(self, data: str) -> None:
+        if self.current_cell is not None:
+            self.current_cell.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        t = tag.lower()
+        if t in ("th", "td") and self.current_cell is not None:
+            self.current_row.append("".join(self.current_cell).strip())
+            self.current_cell = None
+        elif t == "tr" and self.current_row is not None:
+            if self.current_row:
+                self.current_table.append(self.current_row)
+            self.current_row = None
+        elif t == "table" and self.current_table is not None:
+            if self.current_table:
+                self.tables.append(self.current_table)
+            self.current_table = None
 
 
 class WebReader:
@@ -32,30 +70,22 @@ class WebReader:
 
     @staticmethod
     def html_to_markdown_tables(html: str) -> str:
-        """从 HTML 中解析提取 <table> 标签并转换为标准的 Markdown 表格"""
+        """从 HTML 中解析提取 <table> 标签并转换为标准的 Markdown 表格 (纯标准库零依赖)"""
         if not html or "<table" not in html.lower():
             return ""
         try:
-            soup = BeautifulSoup(html, "html.parser")
-            tables = soup.find_all("table")
-            if not tables:
+            parser = _TableHTMLParser()
+            parser.feed(html)
+            if not parser.tables:
                 return ""
             md_tables = []
-            for idx, table in enumerate(tables):
-                rows = table.find_all("tr")
-                if not rows:
+            for table in parser.tables:
+                if not table:
                     continue
-                grid = []
-                for r in rows:
-                    cols = [c.get_text(strip=True) for c in r.find_all(["th", "td"])]
-                    if cols:
-                        grid.append(cols)
-                if not grid:
-                    continue
-                max_cols = max(len(r) for r in grid)
+                max_cols = max(len(r) for r in table)
                 if max_cols == 0:
                     continue
-                norm_grid = [r + [""] * (max_cols - len(r)) for r in grid]
+                norm_grid = [r + [""] * (max_cols - len(r)) for r in table]
                 header = norm_grid[0]
                 sep = ["---"] * max_cols
                 lines = ["| " + " | ".join(header) + " |", "| " + " | ".join(sep) + " |"]
