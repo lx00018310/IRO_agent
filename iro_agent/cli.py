@@ -483,6 +483,32 @@ def cmd_init(args):
     )
 
 
+def cmd_eval(args):
+    """基准评测运行器入口"""
+    if not getattr(args, "subcommand", None):
+        print("请指定评测子命令: dev / regression / external")
+        return
+    from iro_agent.evaluation.runner import EvaluationRunner
+    runner = EvaluationRunner(
+        dataset_type=args.subcommand,
+        custom_path=getattr(args, "dataset", None),
+    )
+    summary = runner.run(
+        category=getattr(args, "category", None),
+        case_id=getattr(args, "case", None),
+        repeat=getattr(args, "repeat", 1),
+        verbose=getattr(args, "verbose", False),
+    )
+    print("\n==================================================")
+    print(f"  [Evaluation Run: {summary.run_id}] 评测完成")
+    print(f"  数据集类型: {summary.dataset_type.upper()}")
+    print(f"  用例总数: {summary.total_cases} | 通过: {summary.passed_cases} | 失败: {summary.failed_cases} | 异常: {summary.error_cases}")
+    print(f"  平均综合得分: {summary.average_score * 100:.2f}%")
+    print(f"  安全违规数: {summary.safety_violations}")
+    print(f"  详细报告已保存至: .eval_runs/{summary.run_id}/report.md")
+    print("==================================================")
+
+
 def main():
     parser = argparse.ArgumentParser(description="IRO_agent - 工业软件只读智能诊断助手")
     parser.add_argument("--config", "-c", help="指定配置文件路径 (默认查找 config.json / config.example.json)")
@@ -510,6 +536,24 @@ def main():
     gateway_parser.add_argument("action", choices=["start", "status", "doctor"], help="操作指令")
     gateway_parser.add_argument("--type", choices=["feishu", "http"], default=None, help="指定网关类型 (默认使用配置项)")
 
+    # eval
+    eval_parser = subparsers.add_parser("eval", help="执行工业故障诊断基准评测 (Evaluation Harness)")
+    eval_subparsers = eval_parser.add_subparsers(dest="subcommand")
+
+    for dt in ["dev", "regression"]:
+        p = eval_subparsers.add_parser(dt, help=f"运行 {dt} 评测集")
+        p.add_argument("--category", help="按案例故障类别过滤")
+        p.add_argument("--case", help="指定单个案例ID")
+        p.add_argument("--repeat", type=int, default=1, help="用例重复运行轮次")
+        p.add_argument("--verbose", "-v", action="store_true", help="打印详细排查过程")
+
+    ext_p = eval_subparsers.add_parser("external", help="运行外部私有盲测集 (External Blind Dataset)")
+    ext_p.add_argument("--dataset", required=True, help="外部私有评测集目录路径")
+    ext_p.add_argument("--category", help="按案例故障类别过滤")
+    ext_p.add_argument("--case", help="指定单个案例ID")
+    ext_p.add_argument("--repeat", type=int, default=1, help="用例重复运行轮次")
+    ext_p.add_argument("--verbose", "-v", action="store_true", help="打印详细排查过程")
+
     args = parser.parse_args()
 
     if args.config:
@@ -525,6 +569,8 @@ def main():
         cmd_chat(args)
     elif args.command == "gateway":
         cmd_gateway(args)
+    elif args.command == "eval":
+        cmd_eval(args)
     else:
         parser.print_help()
 

@@ -33,3 +33,7 @@ config.json
 # Local Knowledge & Blueprint Cache
 .iro_agent/
 
+# Evaluation Runs
+.eval_runs/
+
+
