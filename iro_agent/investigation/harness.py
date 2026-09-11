@@ -4,6 +4,7 @@ from iro_agent.config import get_config
 from iro_agent.security.audit import AuditLogger
 from iro_agent.readers.log_reader import LogReader
 from iro_agent.readers.db_reader import DatabaseReader
+from iro_agent.readers.web_reader import WebReader
 from iro_agent.readers.version_provider import VersionReaderResolver
 from iro_agent.memory.incident_store import IncidentStore
 from iro_agent.memory.learning_store import LearningMemoryStore
@@ -51,6 +52,8 @@ class InvestigationHarness:
         db_reader = DatabaseReader(db_config=self.config.database, audit_logger=self.audit)
         v_reader, _ = VersionReaderResolver.resolve(config=self.config, audit_logger=self.audit)
 
+        web_reader = WebReader(audit_logger=self.audit)
+
         return {
             "log_search": lambda **kwargs: log_reader.search_logs(**kwargs),
             "db_query": lambda **kwargs: db_reader.execute_query(**kwargs),
@@ -58,6 +61,7 @@ class InvestigationHarness:
             "project_lookup": lambda query: self.lookup_engine.lookup(query),
             "version_current": lambda: v_reader.get_current_version() if v_reader else {"version": "UNKNOWN"},
             "diagnostic_pipeline": lambda symptom: self.orchestrator.run_pipeline(symptom=symptom),
+            "web_fetch": lambda **kwargs: web_reader.fetch_page(**kwargs),
         }
 
     def investigate(self, symptom: str, verbose: bool = False) -> InvestigationReport:

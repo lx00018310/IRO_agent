@@ -96,6 +96,8 @@ class FeishuGateway(GatewayAdapter):
 
         dispatcher_builder = lark.EventDispatcherHandler.builder("", "")
         dispatcher_builder.register_p2_im_message_receive_v1(self._on_message_receive)
+        dispatcher_builder.register_p2_im_message_reaction_created_v1(self._on_reaction_event)
+        dispatcher_builder.register_p2_im_message_reaction_deleted_v1(self._on_reaction_event)
         dispatcher = dispatcher_builder.build()
 
         self._ws_client = lark.ws.Client(
@@ -138,6 +140,10 @@ class FeishuGateway(GatewayAdapter):
                         pass
         for sess_id in expired_sessions:
             self.session_recent_images.pop(sess_id, None)
+
+    def _on_reaction_event(self, data: Any) -> None:
+        """静默处理表情回复创建与撤销事件，消除 Lark SDK processor not found 报错日志"""
+        return
 
     def _is_mention_bot(self, mentions: List[Any]) -> bool:
         """严格判定 mentions 列表中是否包含指向机器人自身的条目 (P0 过滤 @张三 等误触发)"""

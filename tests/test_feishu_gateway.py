@@ -408,3 +408,26 @@ def test_10_reaction_emoji_on_message(sample_config, mock_glm_client, tmp_path):
     # 验证同时正常发送了回答
     gw.send_message.assert_called_once()
 
+
+def test_feishu_gateway_reaction_event_silent_ack():
+    """验证飞书网关对 reaction 创建和删除事件的静默吞吐，杜绝 SDK processor not found 报错"""
+    cfg = IROConfig()
+    cfg.feishu.app_id = "cli_test_app_id"
+    cfg.feishu.app_secret = "test_secret"
+    gw = FeishuGateway(config=cfg)
+
+    # 模拟飞书回推表情创建事件
+    fake_reaction_created = {
+        "header": {"event_id": "evt_reaction_001", "event_type": "im.message.reaction.created_v1"},
+        "event": {"reaction_type": {"emoji_type": "OK"}, "message_id": "om_msg_rx_999"},
+    }
+    # 必须平稳执行，无异常抛出
+    gw._on_reaction_event(fake_reaction_created)
+
+    fake_reaction_deleted = {
+        "header": {"event_id": "evt_reaction_002", "event_type": "im.message.reaction.deleted_v1"},
+        "event": {"reaction_type": {"emoji_type": "OK"}, "message_id": "om_msg_rx_999"},
+    }
+    gw._on_reaction_event(fake_reaction_deleted)
+
+

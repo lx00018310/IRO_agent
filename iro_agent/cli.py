@@ -162,6 +162,10 @@ def init_agent_engine(config: IROConfig) -> GlmClient:
 
     client.register_tool_handler("investigation_pipeline", _run_inv)
 
+    from iro_agent.readers.web_reader import WebReader
+    web_reader = WebReader(audit_logger=audit)
+    client.register_tool_handler("web_fetch", lambda **kwargs: web_reader.fetch_page(**kwargs))
+
     return client
 
 

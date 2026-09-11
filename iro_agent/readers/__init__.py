@@ -10,6 +10,8 @@ from iro_agent.readers.version_provider import (
     VersionReaderResolver,
 )
 
+from iro_agent.readers.web_reader import WebReader
+
 __all__ = [
     "GitReader",
     "CodeReader",
@@ -20,4 +22,6 @@ __all__ = [
     "GitReaderAdapter",
     "WReleaseReaderAdapter",
     "VersionReaderResolver",
+    "WebReader",
 ]
+

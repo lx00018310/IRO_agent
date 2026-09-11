@@ -256,6 +256,23 @@ class GlmClient:
                     },
                 },
             },
+            {
+                "type": "function",
+                "function": {
+                    "name": "web_fetch",
+                    "description": "安全只读抓取外部或内网工控网页、调度日志页面 (如 http://10.100.139.170)。支持可选账号密码登录、关键词过滤与正文提取",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "url": {"type": "string", "description": "目标网页或日志接口完整的 HTTP/HTTPS 地址"},
+                            "keyword": {"type": "string", "description": "可选过滤关键词 (如 ERROR, dispatch, 11号月台)"},
+                            "username": {"type": "string", "description": "可选身份验证用户名 (如 admin)"},
+                            "password": {"type": "string", "description": "可选密码 (若为空可传空字符串)"},
+                        },
+                        "required": ["url"],
+                    },
+                },
+            },
         ]
 
     def chat_completion(
