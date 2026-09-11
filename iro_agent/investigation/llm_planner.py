@@ -74,7 +74,9 @@ class LLMInvestigationPlanner:
 - CONTRADICT: 客观事实反驳已有假设 (需指定 hypothesis_id、evidence_ids 和 confidence: 0.0~1.0)
 - RETIRE: 证据彻底排除该假设 (需指定 hypothesis_id 和 reason)
 - MERGE: 合并重复假设 (需指定 hypothesis_id)
-注意：evidence_ids 必须引用【已采集的客观事实证据】中存在的有效 Evidence ID，严禁凭空编造！
+【证据与假设引用强约束 (Evidence & Hypothesis ID Constraints)】
+1. 引用证据必须真实有效：在 hypothesis_updates 中提供 evidence_ids 时，必须且只能引用上述【已采集的客观事实证据】中真实出现的 evidence_id (如 EV_001, EV_002 等)！绝对禁止凭空捏造 (Only use evidence_ids that appear in the provided evidence list. Never invent an evidence_id)。
+2. 引用假设必须真实有效：除了 action="ADD" 用于动态创建新假设外，其他动作 (SUPPORT, CONTRADICT, REVISE, RETIRE, MERGE) 以及 target_hypothesis 必须引用上述【当前排查假设状态】中真实存在的 hypothesis_id (如 H1, H2 等) (Only reference hypothesis_id values that appear in the hypothesis list, except when action=ADD)。
 
 【输出格式硬性要求】
 你必须且仅输出一个合法的 JSON 格式对象，严禁包含任何其他无关文本。格式如下：
@@ -86,12 +88,12 @@ class LLMInvestigationPlanner:
       "action": "SUPPORT",
       "hypothesis_id": "H1",
       "confidence": 0.85,
-      "evidence_ids": ["E1"],
+      "evidence_ids": ["EV_001"],
       "reason": "日志表明存在通信超时"
     }}
   ],
   "decision": "EXECUTE_TOOL",
-  "target_hypothesis": "假设ID",
+  "target_hypothesis": "H1",
   "tool_name": "工具名称",
   "tool_arguments": {{ "arg1": "value1" }},
   "reason": "执行该操作的排查目的"
@@ -199,22 +201,34 @@ class LLMInvestigationPlanner:
         evidence_records: List[EvidenceRecord],
         remaining_budget: int,
     ) -> str:
-        # 格式化假设列表
+        # 格式化假设列表 (显式包含 hypothesis_id 与支持/反驳证据 ID)
         hypo_lines = []
         for h in hypotheses:
             status_str = f"[{h.status.value}]" if hasattr(h.status, "value") else f"[{h.status}]"
-            hypo_lines.append(f"- {h.hypothesis_id}: {status_str} {h.description}")
+            hypo_lines.append(f"- [{h.hypothesis_id}]: {status_str} {h.description}")
             if h.supporting_evidence:
-                hypo_lines.append(f"  支持证据: {h.supporting_evidence}")
+                hypo_lines.append(f"    支持证据 ID: {h.supporting_evidence}")
             if h.contradicting_evidence:
-                hypo_lines.append(f"  反驳证据: {h.contradicting_evidence}")
+                hypo_lines.append(f"    反驳证据 ID: {h.contradicting_evidence}")
         hypotheses_text = "\n".join(hypo_lines) if hypo_lines else "（暂无活动假设）"
 
-        # 格式化已收集的证据
+        # 格式化已收集的证据 (显式包含 evidence_id, source, timestamp, fact, reliability, availability)
         ev_lines = []
         for ev in evidence_records:
             tier_val = ev.tier.value if hasattr(ev.tier, "value") else str(ev.tier)
-            ev_lines.append(f"- [{tier_val}] {ev.source_name}: {ev.raw_summary}")
+            fact = ev.normalized_fact or ev.raw_summary
+            avail = "OBSERVABILITY_GAP" if ev.error_type == "OBSERVABILITY_GAP" else ("ERROR" if ev.is_error else "AVAILABLE")
+            ts = ev.timestamp or "N/A"
+            ev_dict = {
+                "evidence_id": ev.evidence_id,
+                "source": ev.source_name,
+                "timestamp": ts,
+                "fact": fact,
+                "reliability": ev.reliability,
+                "availability": avail,
+            }
+            ev_lines.append(f"- [{ev.evidence_id}] [{tier_val}] {ev.source_name}: {fact}")
+            ev_lines.append(f"    详情: {json.dumps(ev_dict, ensure_ascii=False)}")
         evidence_text = "\n".join(ev_lines) if ev_lines else "（尚未采集到客观证据）"
 
         # 格式化工具列表
