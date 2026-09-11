@@ -96,12 +96,31 @@ class InvestigationReport(BaseModel):
     """排查结案综合报告"""
     case_type: CaseType
     symptom: str
+    case_id: str = "adhoc"
     hypotheses: List[Hypothesis] = Field(default_factory=list)
     primary_root_cause: Optional[str] = None
+    root_cause: Optional[str] = None
     confidence: str = "Medium"
+    final_status: str = "CONVERGED"
     key_evidence: List[str] = Field(default_factory=list)
+    unknown_factors: List[str] = Field(default_factory=list)
     investigation_trace: List[InvestigationStep] = Field(default_factory=list)
     physical_escalation_checklist: List[str] = Field(default_factory=list)
+    recommended_actions: List[str] = Field(default_factory=list)
+    physical_escalation_required: bool = False
     stop_reason: str = ""
     evidence_records: List[EvidenceRecord] = Field(default_factory=list)
+
+    def model_post_init(self, __context: Any) -> None:
+        if self.root_cause and not self.primary_root_cause:
+            self.primary_root_cause = self.root_cause
+        elif self.primary_root_cause and not self.root_cause:
+            self.root_cause = self.primary_root_cause
+        if self.recommended_actions and not self.physical_escalation_checklist:
+            self.physical_escalation_checklist = list(self.recommended_actions)
+        elif self.physical_escalation_checklist and not self.recommended_actions:
+            self.recommended_actions = list(self.physical_escalation_checklist)
+        if self.physical_escalation_checklist or self.recommended_actions:
+            self.physical_escalation_required = True
+
 

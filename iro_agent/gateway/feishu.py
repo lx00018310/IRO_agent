@@ -53,6 +53,9 @@ def clean_mention_text(raw_text: str, mentions: Optional[List[Any]] = None, bot_
     return cleaned.strip()
 
 
+from iro_agent.runtime.dispatcher import RuntimeDispatcher, RuntimeRoute
+
+
 class FeishuGateway(GatewayAdapter):
     """飞书企业自建应用 Bot 生产网关（基于 WebSocket 长连接）"""
 
@@ -60,10 +63,12 @@ class FeishuGateway(GatewayAdapter):
         self,
         config: Optional[IROConfig] = None,
         glm_client: Optional[GlmClient] = None,
+        dispatcher: Optional[RuntimeDispatcher] = None,
         dedup_db_path: str = "iro_agent_gateway_events.db",
     ):
         self.config = config or get_config()
         self.glm_client = glm_client
+        self.dispatcher = dispatcher or RuntimeDispatcher(config=self.config, glm_client=self.glm_client)
         self.app_id = self.config.feishu.app_id
         self.app_secret = self.config.feishu.app_secret
         self.bot_name = self.config.feishu.bot_name or "IRO_agent"
@@ -237,6 +242,19 @@ class FeishuGateway(GatewayAdapter):
             logger.warning(f"飞书事件规范化失败: {e}")
             return None
 
+    def handle_message(self, msg: GatewayMessage) -> None:
+        """为网关消息分发提供统一测试与直接调用入口"""
+        session_id = f"feishu:{msg.chat_type}:{msg.chat_id}"
+        target_project = self.config.project_name
+        self._process_message_payload(
+            msg=msg,
+            session_id=session_id,
+            target_project=target_project,
+            prompt_content=msg.text,
+            tmp_image_to_use=None,
+            should_cleanup_img=False,
+        )
+
     def _on_message_receive(self, event_data: Any) -> None:
         """飞书消息接收核心处理"""
         self._cleanup_expired_images()
@@ -382,21 +400,25 @@ class FeishuGateway(GatewayAdapter):
             return
 
         try:
-            # 维护上下文会话并注入前置规则
-            recalled_rules = learning_store.recall_rules(prompt_content, project=self.config.project_name, limit=3)
-            prompt_to_send = prompt_content
-            if recalled_rules:
-                rules_str = "\n".join(f"- {r['rule_text']} (领域: {r['topic']}, 依据: {r['reason']})" for r in recalled_rules)
-                prompt_to_send = f"【历史已确认学习规则提示（排查必须严格遵守此原则）】:\n{rules_str}\n\n现场提问: {prompt_content}"
-
             history = self.session_history.setdefault(session_id, [])
-            history.append({"role": "user", "content": prompt_to_send})
+            current_history = list(history)
+            current_history.append({"role": "user", "content": prompt_content})
 
-            reply_text = "收到请求，正在诊断中..."
-            if self.glm_client:
-                print(f"[飞书研判] 正在调用 GLM-5.3-Flash 开展只读诊断...")
-                reply_text = self.glm_client.chat_completion(history, image_path=tmp_image_to_use, verbose=True)
-                history.append({"role": "assistant", "content": reply_text})
+            # 统一通过 RuntimeDispatcher 进行意图判定与调查编排
+            print(f"[飞书分发] 正在通过 RuntimeDispatcher 进行意图判定与链路分发...")
+            dispatch_res = self.dispatcher.dispatch(
+                message=prompt_content,
+                context={
+                    "image_path": tmp_image_to_use,
+                    "session_id": session_id,
+                    "history": current_history,
+                },
+                session_id=session_id,
+            )
+            reply_text = dispatch_res.reply_text
+
+            history.append({"role": "user", "content": prompt_content})
+            history.append({"role": "assistant", "content": reply_text})
 
             # 4. 敏感凭据脱敏与回送
             safe_reply = redact_secrets(reply_text)

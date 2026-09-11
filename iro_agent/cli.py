@@ -16,6 +16,7 @@ from iro_agent.memory.incident_store import IncidentStore
 from iro_agent.llm.glm_client import GlmClient
 from iro_agent.gateway.feishu import FeishuGateway
 from iro_agent.gateway.http_adapter import HttpGatewayAdapter
+from iro_agent.runtime.dispatcher import RuntimeDispatcher, RuntimeRoute
 
 import re
 
@@ -329,26 +330,20 @@ def cmd_chat(args):
                 history.append({"role": "assistant", "content": reply})
                 continue
 
-            # 2. 查询意图识别与前置学习记忆召回
-            intent_res = IntentRouter.route(clean_prompt)
-            print(f"[意图路由] 判定为: {intent_res['intent'].value} (置信度: {intent_res['confidence']:.2f}) | {intent_res['execution_strategy']}")
+            # 2. 统一经过运行时分发器 (RuntimeDispatcher)
+            # 若为 RUNTIME_FAULT 自动进入 InvestigationHarness 动态排查闭环；若为事实问答走轻量通道
+            dispatcher = RuntimeDispatcher(config=config, glm_client=engine)
+            route = dispatcher.determine_route(clean_prompt)
+            print(f"[运行时路由] 判定为: {route.value}")
+            print("\n正在处理与诊断...")
 
-            recalled_rules = learning_store.recall_rules(clean_prompt, project=config.project_name, limit=3)
-            prompt_to_send = clean_prompt
-            if recalled_rules:
-                rules_str = "\n".join(f"- {r['rule_text']} (领域: {r['topic']}, 依据: {r['reason']})" for r in recalled_rules)
-                print(f"[前置记忆召回] 命中 {len(recalled_rules)} 条历史学习规则，已作为最高准则注入本次排查")
-                prompt_to_send = f"【历史已确认学习规则提示（排查必须严格遵守此原则）】:\n{rules_str}\n\n现场提问: {clean_prompt}"
+            dispatch_res = dispatcher.dispatch(clean_prompt, session_id="cli_session")
+            reply = dispatch_res.reply_text
 
-            history.append({"role": "user", "content": prompt_to_send})
-            print("\n正在查询诊断...")
-
-            reply = engine.chat_completion(history, image_path=img_to_use, verbose=True)
+            history.append({"role": "user", "content": clean_prompt})
             history.append({"role": "assistant", "content": reply})
 
-            print(f"\n[大模型诊断回复]:\n{reply}")
-
-            # 故障记忆由 DiagnosticOrchestrator 在诊断流水线中统一单点沉淀，CLI 仅负责呈现，杜绝重复记录
+            print(f"\n[诊断回复]:\n{reply}")
 
         except (KeyboardInterrupt, EOFError):
             print("\n退出诊断控制台。")
@@ -356,6 +351,18 @@ def cmd_chat(args):
             break
         except Exception as e:
             print(f"\n[诊断异常] {e}")
+
+
+def cmd_investigate(args):
+    """直接执行工业故障调查 (Investigation Harness)"""
+    config = get_config()
+    dispatcher = RuntimeDispatcher(config=config)
+    res = dispatcher.dispatch(
+        message=args.symptom,
+        context={"verbose": args.verbose, "force_route": RuntimeRoute.RUNTIME_FAULT},
+        session_id="cli_investigate",
+    )
+    print("\n" + res.reply_text)
 
 
 def run_gateway_doctor(config: IROConfig):
@@ -536,6 +543,11 @@ def main():
     gateway_parser.add_argument("action", choices=["start", "status", "doctor"], help="操作指令")
     gateway_parser.add_argument("--type", choices=["feishu", "http"], default=None, help="指定网关类型 (默认使用配置项)")
 
+    # investigate
+    investigate_parser = subparsers.add_parser("investigate", help="直接发起工业故障现场调查 (Investigation Harness)")
+    investigate_parser.add_argument("symptom", help="故障现象描述")
+    investigate_parser.add_argument("--verbose", "-v", action="store_true", help="打印详细排查过程")
+
     # eval
     eval_parser = subparsers.add_parser("eval", help="执行工业故障诊断基准评测 (Evaluation Harness)")
     eval_subparsers = eval_parser.add_subparsers(dest="subcommand")
@@ -567,6 +579,8 @@ def main():
         cmd_config(args)
     elif args.command == "chat":
         cmd_chat(args)
+    elif args.command == "investigate":
+        cmd_investigate(args)
     elif args.command == "gateway":
         cmd_gateway(args)
     elif args.command == "eval":
