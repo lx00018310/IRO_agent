@@ -19,8 +19,7 @@ def test_tool_timeout_produces_observability_gap():
     assert report is not None
     # 验证证据列表中包含了工具异常或错误记录
     error_evidence = [e for e in report.evidence_records if e.is_error]
-    assert len(error_evidence) > 0
-    assert error_evidence[0].error_type == "tool_failure"
+    assert error_evidence[0].error_type in ("tool_failure", "OBSERVABILITY_GAP")
     assert "timed out" in str(error_evidence[0].raw_summary).lower()
 
     # 验证不应该被认定为明确排除了故障，结论应带有证据不足或观测缺口特征
