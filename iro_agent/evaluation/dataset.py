@@ -1,8 +1,12 @@
 import json
-import yaml
 from pathlib import Path
 from typing import List, Optional, Union
 from iro_agent.evaluation.models import EvalCase
+
+try:
+    import yaml
+except ImportError:
+    yaml = None
 
 
 class EvalDatasetLoader:
@@ -16,6 +20,8 @@ class EvalDatasetLoader:
 
         content = path.read_text(encoding="utf-8")
         if path.suffix.lower() in (".yaml", ".yml"):
+            if yaml is None:
+                raise ImportError("读取 YAML 格式用例需要安装 PyYAML：pip install pyyaml")
             data = yaml.safe_load(content)
         else:
             data = json.loads(content)
