@@ -45,11 +45,30 @@ class LLMInvestigationPlanner:
 3. ESCALATE_PHYSICAL: 当数字系统层（代码/日志/DB/配置/网络）均未发现异常，推断可能为现场物理电气/机械故障（如急停拍下、光电传感器脏污遮挡、伺服抱闸、硬件接线松动）时选择。
 4. GIVE_UP: 当预算耗尽或缺乏有效可查维度时选择。
 
+【假设动态更新规则 (hypothesis_updates)】
+根据新采集到的客观事实证据，你可以提议对当前假设进行调整：
+- ADD: 发现全新线索，提议新增假设 (需提供 statement 和 confidence: 0.0~1.0)
+- REVISE: 修正已有假设的描述 (需指定 hypothesis_id 和 statement)
+- SUPPORT: 客观事实支持已有假设 (需指定 hypothesis_id、evidence_ids 和 confidence: 0.0~1.0)
+- CONTRADICT: 客观事实反驳已有假设 (需指定 hypothesis_id、evidence_ids 和 confidence: 0.0~1.0)
+- RETIRE: 证据彻底排除该假设 (需指定 hypothesis_id 和 reason)
+- MERGE: 合并重复假设 (需指定 hypothesis_id)
+注意：evidence_ids 必须引用【已采集的客观事实证据】中存在的有效 Evidence ID，严禁凭空编造！
+
 【输出格式硬性要求】
 你必须且仅输出一个合法的 JSON 格式对象，严禁包含任何其他无关文本。格式如下：
 ```json
 {{
   "thought": "你的现场排查逻辑推导与思考过程",
+  "hypothesis_updates": [
+    {{
+      "action": "SUPPORT",
+      "hypothesis_id": "H1",
+      "confidence": 0.85,
+      "evidence_ids": ["E1"],
+      "reason": "日志表明存在通信超时"
+    }}
+  ],
   "decision": "EXECUTE_TOOL",
   "target_hypothesis": "假设ID",
   "tool_name": "工具名称",
@@ -124,7 +143,7 @@ class LLMInvestigationPlanner:
                     )
 
             # 严格验证决策合法性
-            is_valid, val_err = self.validator.validate(decision, hypotheses)
+            is_valid, val_err = self.validator.validate(decision, hypotheses, evidence_records)
             if not is_valid:
                 logger.warning(f"[LLMPlanner] 第 {attempt} 次决策校验未通过: {val_err}")
                 if attempt <= max_retries:

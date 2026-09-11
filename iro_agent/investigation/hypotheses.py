@@ -2,7 +2,13 @@ import json
 import re
 import logging
 from typing import List, Dict, Any, Optional
-from iro_agent.investigation.models import CaseType, Hypothesis, HypothesisStatus
+from iro_agent.investigation.models import (
+    CaseType,
+    Hypothesis,
+    HypothesisStatus,
+    HypothesisAction,
+    HypothesisUpdate,
+)
 from iro_agent.llm.glm_client import GlmClient
 
 logger = logging.getLogger(__name__)
@@ -241,6 +247,57 @@ class HypothesisManager:
 
     def strongly_support(self, hypothesis_id: str, reason: str, evidence: Optional[str] = None) -> bool:
         return self.update_status(hypothesis_id, HypothesisStatus.STRONGLY_SUPPORTED, reason, evidence)
+
+    def apply_updates(
+        self,
+        updates: List[HypothesisUpdate],
+        evidence_history: Optional[List[Any]] = None,
+    ) -> List[str]:
+        """
+        受控执行来自 LLM Planner 的假设生命周期更新建议
+        """
+        applied: List[str] = []
+        for upd in updates:
+            action = upd.action
+            if action == HypothesisAction.ADD:
+                if upd.statement:
+                    h_id = self.add_hypothesis(
+                        description=upd.statement,
+                        required_evidence=upd.evidence_ids,
+                        hypothesis_id=upd.hypothesis_id,
+                    )
+                    applied.append(f"ADD:{h_id}")
+            elif action == HypothesisAction.REVISE:
+                if upd.hypothesis_id and self.revise_hypothesis(upd.hypothesis_id, new_description=upd.statement):
+                    applied.append(f"REVISE:{upd.hypothesis_id}")
+            elif action == HypothesisAction.RETIRE:
+                if upd.hypothesis_id and self.retire_hypothesis(upd.hypothesis_id, reason=upd.reason or "LLM判定淘汰"):
+                    applied.append(f"RETIRE:{upd.hypothesis_id}")
+            elif action == HypothesisAction.SUPPORT:
+                if upd.hypothesis_id:
+                    new_status = (
+                        HypothesisStatus.STRONGLY_SUPPORTED
+                        if (upd.confidence is not None and upd.confidence >= 0.8)
+                        else HypothesisStatus.SUPPORTED
+                    )
+                    ev_str = ", ".join(upd.evidence_ids) if upd.evidence_ids else (upd.reason or "")
+                    if self.update_status(upd.hypothesis_id, new_status, reason=upd.reason, evidence=ev_str):
+                        applied.append(f"SUPPORT:{upd.hypothesis_id}")
+            elif action == HypothesisAction.CONTRADICT:
+                if upd.hypothesis_id:
+                    new_status = (
+                        HypothesisStatus.RULED_OUT
+                        if (upd.confidence is not None and upd.confidence <= 0.15)
+                        else HypothesisStatus.WEAK
+                    )
+                    ev_str = ", ".join(upd.evidence_ids) if upd.evidence_ids else (upd.reason or "")
+                    if self.update_status(upd.hypothesis_id, new_status, reason=upd.reason, evidence=ev_str):
+                        applied.append(f"CONTRADICT:{upd.hypothesis_id}")
+            elif action == HypothesisAction.MERGE:
+                if upd.hypothesis_id:
+                    self.retire_hypothesis(upd.hypothesis_id, reason=f"合并假设: {upd.reason}")
+                    applied.append(f"MERGE:{upd.hypothesis_id}")
+        return applied
 
     def get_top_hypothesis(self) -> Optional[Hypothesis]:
         """获取当前综合评级最高的活动假设"""

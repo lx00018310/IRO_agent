@@ -4,6 +4,8 @@ from iro_agent.investigation.models import (
     DecisionAction,
     Hypothesis,
     HypothesisStatus,
+    HypothesisAction,
+    HypothesisUpdate,
 )
 from iro_agent.investigation.tool_registry import ToolRegistry
 
@@ -15,7 +17,8 @@ class PlannerValidator:
     1. 校验工具是否属于只读安全白名单；
     2. 校验参数是否合法、是否含有数据库写或设备控制危险动作；
     3. 校验目标假设 ID 是否属于当前已知假设；
-    4. 产生精准错误提示，支持 LLM 自我修正重试。
+    4. 校验假设生命周期更新建议 (HypothesisUpdate) 的合法性与证据溯源性；
+    5. 产生精准错误提示，支持 LLM 自我修正重试。
     """
 
     def __init__(self, registry: Optional[ToolRegistry] = None):
@@ -25,6 +28,7 @@ class PlannerValidator:
         self,
         decision: PlannerDecision,
         hypotheses: Optional[List[Hypothesis]] = None,
+        evidence_history: Optional[List[Any]] = None,
     ) -> Tuple[bool, Optional[str]]:
         """
         全面校验决策合法性
@@ -32,6 +36,55 @@ class PlannerValidator:
         """
         if not decision:
             return False, "决策对象为空"
+
+        # 0. 假设生命周期更新建议 (HypothesisUpdate) 校验
+        valid_ids = [h.hypothesis_id for h in (hypotheses or [])]
+        valid_ev_ids = set()
+        for e in (evidence_history or []):
+            if hasattr(e, "evidence_id") and e.evidence_id:
+                valid_ev_ids.add(e.evidence_id)
+            elif isinstance(e, dict) and e.get("evidence_id"):
+                valid_ev_ids.add(e["evidence_id"])
+
+        for upd in getattr(decision, "hypothesis_updates", []):
+            if not isinstance(upd.action, HypothesisAction):
+                try:
+                    upd.action = HypothesisAction(upd.action)
+                except ValueError:
+                    return False, f"无效的假设更新动作 '{upd.action}'，允许的动作: {[a.value for a in HypothesisAction]}"
+
+            # 置信度范围校验
+            if upd.confidence is not None:
+                if not (0.0 <= upd.confidence <= 1.0):
+                    return False, f"假设更新置信度 confidence={upd.confidence} 超出合法区间 [0.0, 1.0]"
+
+            # 证据 ID 校验
+            if upd.evidence_ids:
+                for ev_id in upd.evidence_ids:
+                    # 严禁将用户故障描述或随意文本作为 Evidence ID
+                    import re
+                    if not re.match(r"^[A-Za-z0-9_\-]+$", ev_id) or len(ev_id) > 20:
+                        return False, f"非法的 Evidence ID 格式 '{ev_id}'，严禁将用户故障现象或自然语言作为证据引用"
+                    if evidence_history is not None and ev_id not in valid_ev_ids:
+                        return False, f"假设更新引用了不存在的证据 ID '{ev_id}'。当前有效证据 ID: {list(valid_ev_ids)}"
+
+            # 动作与目标假设关系校验
+            if upd.action in (HypothesisAction.SUPPORT, HypothesisAction.CONTRADICT):
+                if not upd.hypothesis_id or (valid_ids and upd.hypothesis_id not in valid_ids):
+                    return False, f"{upd.action.value} 操作引用的目标假设 ID '{upd.hypothesis_id}' 不存在"
+                if not upd.evidence_ids:
+                    return False, f"{upd.action.value} 操作必须绑定具体的客观证据 ID (evidence_ids 不能为空)"
+
+            elif upd.action in (HypothesisAction.RETIRE, HypothesisAction.REVISE):
+                if not upd.hypothesis_id or (valid_ids and upd.hypothesis_id not in valid_ids):
+                    return False, f"{upd.action.value} 操作引用的目标假设 ID '{upd.hypothesis_id}' 不存在"
+
+            elif upd.action == HypothesisAction.ADD:
+                if not upd.statement or not upd.statement.strip():
+                    return False, "ADD 操作必须提供有效的假设描述 (statement 不能为空)"
+                for h in (hypotheses or []):
+                    if h.description.strip() == upd.statement.strip():
+                        return False, f"ADD 操作描述与已有假设 '{h.hypothesis_id}' 重叠重复"
 
         # 1. 动作类型校验
         if not isinstance(decision.decision, DecisionAction):

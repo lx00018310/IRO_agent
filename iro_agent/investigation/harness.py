@@ -188,6 +188,12 @@ class InvestigationHarness:
                     remaining_budget=remaining_budget,
                 )
 
+                # 应用大模型规划器对假设提出的生命周期更新
+                if getattr(decision, "hypothesis_updates", None):
+                    applied = hypo_mgr.apply_updates(decision.hypothesis_updates, evidence_history=state.evidence)
+                    if verbose and applied:
+                        print(f"  [假设生命周期动态更新]: {', '.join(applied)}")
+
                 if decision.error and "PLANNER_ERROR" in decision.error:
                     # 当大模型不可用或鉴权失败时，平滑降级为确定性排查引擎，后续轮次直接确定性执行
                     self.planner_mode = "deterministic"

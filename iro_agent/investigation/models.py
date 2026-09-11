@@ -132,9 +132,30 @@ class DecisionAction(str, Enum):
     GIVE_UP = "GIVE_UP"
 
 
+class HypothesisAction(str, Enum):
+    """假设生命周期更新动作枚举"""
+    ADD = "ADD"
+    REVISE = "REVISE"
+    SUPPORT = "SUPPORT"
+    CONTRADICT = "CONTRADICT"
+    RETIRE = "RETIRE"
+    MERGE = "MERGE"
+
+
+class HypothesisUpdate(BaseModel):
+    """LLM 规划器对假设提出的生命周期更新建议"""
+    action: HypothesisAction
+    hypothesis_id: Optional[str] = None
+    statement: Optional[str] = None
+    confidence: Optional[float] = None
+    evidence_ids: List[str] = Field(default_factory=list)
+    reason: str = ""
+
+
 class PlannerDecision(BaseModel):
     """LLM 调查规划器单步决策结果"""
     thought: str = ""
+    hypothesis_updates: List[HypothesisUpdate] = Field(default_factory=list)
     decision: DecisionAction = DecisionAction.EXECUTE_TOOL
     target_hypothesis: Optional[str] = None
     tool_name: Optional[str] = None
