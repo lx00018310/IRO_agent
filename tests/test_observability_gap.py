@@ -13,7 +13,7 @@ def test_tool_timeout_produces_observability_gap():
         "version_current": lambda: {"version": "v1.2.0"},
     }
 
-    harness = InvestigationHarness(tool_handlers=mock_tools)
+    harness = InvestigationHarness(tool_handlers=mock_tools, planner_mode="deterministic")
     report = harness.investigate(symptom="PLC通信异常导致机器人未动作")
 
     assert report is not None

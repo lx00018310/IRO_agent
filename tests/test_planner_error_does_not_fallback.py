@@ -7,9 +7,15 @@ from iro_agent.llm.glm_client import GlmClient
 def test_planner_error_does_not_fallback_to_deterministic():
     """断言 LLM Planner 异常时立即显式中止排查，严禁静默 fallback 到确定性模式继续排查"""
     mock_glm = MagicMock(spec=GlmClient)
-    # 模拟大模型发生通信异常或不可用
-    mock_glm.complete_structured.side_effect = RuntimeError("GLM connection refused: connection timed out")
-    mock_glm.chat_completion.side_effect = RuntimeError("GLM connection refused: connection timed out")
+    # 模拟假设生成成功，Planner 规划阶段通信异常
+    mock_glm.complete_structured.side_effect = [
+        """```json
+[
+  {"hypothesis_id": "H1", "description": "设备通信中断", "related_flow_step": "通信", "required_evidence": ["log_search"]}
+]
+```""",
+        RuntimeError("GLM connection refused: connection timed out"),
+    ]
 
     harness = InvestigationHarness(planner_mode="llm", glm_client=mock_glm)
 

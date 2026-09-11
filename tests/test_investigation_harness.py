@@ -12,7 +12,7 @@ def test_harness_backend_error_case():
         "version_current": lambda: {"version": "v1.2.0"},
     }
 
-    harness = InvestigationHarness(tool_handlers=mock_tools)
+    harness = InvestigationHarness(tool_handlers=mock_tools, planner_mode="deterministic")
     report = harness.investigate(symptom="后端服务报错崩溃，报NullPointerException")
 
     assert report.case_type == CaseType.APPLICATION_ERROR
@@ -32,7 +32,7 @@ def test_harness_robot_stalled_case():
         "version_current": lambda: {"version": "v1.2.0"},
     }
 
-    harness = InvestigationHarness(tool_handlers=mock_tools)
+    harness = InvestigationHarness(tool_handlers=mock_tools, planner_mode="deterministic")
     report = harness.investigate(symptom="PLC已经发P2C，为什么机器人不走？")
 
     assert report.case_type in (CaseType.ROBOT_EXECUTION_ERROR, CaseType.PLC_SIGNAL_ERROR)
@@ -48,7 +48,7 @@ def test_harness_digital_evidence_normal_triggers_physical_checklist():
         "version_current": lambda: {"version": "v1.2.0"},
     }
 
-    harness = InvestigationHarness(tool_handlers=mock_tools)
+    harness = InvestigationHarness(tool_handlers=mock_tools, planner_mode="deterministic")
     report = harness.investigate(symptom="现场上车小车不动，但系统无任何报错")
 
     assert len(report.physical_escalation_checklist) >= 3

@@ -127,7 +127,7 @@ class DynamicHypothesisGenerator:
                     status=HypothesisStatus.UNRESOLVED,
                 ))
 
-            if len(hypos) >= 2:
+            if len(hypos) >= 1:
                 logger.info(f"[HypothesisGenerator] 成功由 LLM 动态推导生成 {len(hypos)} 个竞争假设")
                 return hypos
 
@@ -161,10 +161,11 @@ class HypothesisManager:
 
         if initial_hypotheses:
             self.hypotheses = list(initial_hypotheses)
-        else:
-            # 优先尝试 LLM 动态生成
+            self.source = "initial_provided"
+        elif self.glm_client:
+            # LLM 动态推演模式：严禁静默 fallback 到确定性静态模板，必须 Fail Closed
             dynamic_hypos = None
-            if self.glm_client and self.symptom:
+            if self.symptom:
                 dynamic_hypos = DynamicHypothesisGenerator.generate_from_llm(
                     symptom=self.symptom,
                     flows=self.flows,
@@ -175,8 +176,11 @@ class HypothesisManager:
                 self.hypotheses = dynamic_hypos
                 self.source = "llm_dynamic"
             else:
-                self.hypotheses = self._generate_fallback_hypotheses()
-                self.source = "deterministic_template"
+                self.hypotheses = []
+                self.source = "error"
+        else:
+            self.hypotheses = self._generate_fallback_hypotheses()
+            self.source = "deterministic_template"
 
     @property
     def active_hypotheses(self) -> List[Hypothesis]:

@@ -65,7 +65,7 @@ class InvestigationHarness:
         self.lookup_engine = ProjectLookupEngine(store=self.knowledge_store)
         self.orchestrator = DiagnosticOrchestrator(audit_logger=self.audit)
 
-        # 智能探测 LLM 运行条件：若未提供有效 client 或凭据未配置/格式无效，安全静默降级为确定性模式
+        # 严格检验 LLM 运行条件：若未提供有效 client 或凭据未配置/格式无效，在 LLM 模式下禁止静默降级为确定性模式 (Fail Closed)
         glm_cfg = getattr(self.config, "glm", None)
         api_key = getattr(glm_cfg, "api_key", "") if glm_cfg else ""
         has_valid_llm = bool(
@@ -73,10 +73,8 @@ class InvestigationHarness:
             or llm_planner
             or (api_key and "mock" not in api_key.lower() and "your" not in api_key.lower() and "." in api_key)
         )
-        if planner_mode == "llm" and not has_valid_llm:
-            self.planner_mode = "deterministic"
-        else:
-            self.planner_mode = planner_mode
+        self.planner_mode = planner_mode
+        self._llm_available = has_valid_llm
 
         self.tool_handlers = tool_handlers or self._build_default_tools()
         self.tool_registry = tool_registry or ToolRegistry(include_legacy_pipelines=(self.planner_mode == "deterministic"))
@@ -87,13 +85,20 @@ class InvestigationHarness:
                 self.glm_client = glm_client
             elif llm_planner and getattr(llm_planner, "glm_client", None):
                 self.glm_client = llm_planner.glm_client
-            else:
+            elif self._llm_available:
                 self.glm_client = GlmClient(audit_logger=self.audit)
+            else:
+                self.glm_client = None
 
-            self.llm_planner = llm_planner or LLMInvestigationPlanner(
-                glm_client=self.glm_client,
-                registry=self.tool_registry,
-            )
+            if llm_planner:
+                self.llm_planner = llm_planner
+            elif self.glm_client:
+                self.llm_planner = LLMInvestigationPlanner(
+                    glm_client=self.glm_client,
+                    registry=self.tool_registry,
+                )
+            else:
+                self.llm_planner = None
         else:
             self.dynamic_hypotheses = dynamic_hypotheses
             self.glm_client = glm_client
@@ -127,6 +132,27 @@ class InvestigationHarness:
 
     def investigate(self, symptom: str, verbose: bool = False) -> InvestigationReport:
         """端到端假设驱动现场故障排查流水线 (迭代式 Next-Best-Evidence 逐轮重规划智能闭环)"""
+        # 0. 严格检验 LLM 模式运行条件 (Fail Closed 机制，杜绝静默降级)
+        if self.planner_mode == "llm" and (not self._llm_available or self.llm_planner is None or self.glm_client is None):
+            case_type = InvestigationCaseClassifier.classify(symptom)
+            stop_reason = "AGENTIC_PLANNER_UNAVAILABLE"
+            primary_cause = "排查规划异常: AGENTIC_PLANNER_UNAVAILABLE (Agentic 模式未配置可用的大模型客户端或凭据)"
+            return InvestigationReport(
+                case_type=case_type,
+                symptom=symptom,
+                hypotheses=[],
+                primary_root_cause=primary_cause,
+                confidence="Low",
+                final_status="PLANNER_ERROR",
+                key_evidence=[],
+                investigation_trace=[],
+                physical_escalation_checklist=[],
+                physical_escalation_required=False,
+                stop_reason=stop_reason,
+                unknown_factors=["Agentic planner client/credentials unavailable"],
+                evidence_records=[],
+            )
+
         # 1. 前置记忆召回与分类
         recalled_rules = self.learning_store.recall_rules(symptom, project=self.config.project_name, limit=3)
         case_type = InvestigationCaseClassifier.classify(symptom)
@@ -140,6 +166,26 @@ class InvestigationHarness:
             flows=flows,
             glm_client=self.glm_client if (self.planner_mode == "llm" and self.dynamic_hypotheses) else None,
         )
+
+        # 2.1 LLM 模式下若假设生成失败，严禁降级到确定性模板，立即 Fail Closed 阻断排查
+        if self.planner_mode == "llm" and (hypo_mgr.source == "error" or not hypo_mgr.hypotheses):
+            stop_reason = "HYPOTHESIS_GENERATION_ERROR"
+            primary_cause = "排查规划异常: HYPOTHESIS_GENERATION_ERROR (LLM 动态推导竞争假设失败且禁止降级)"
+            return InvestigationReport(
+                case_type=case_type,
+                symptom=symptom,
+                hypotheses=[],
+                primary_root_cause=primary_cause,
+                confidence="Low",
+                final_status="PLANNER_ERROR",
+                key_evidence=[],
+                investigation_trace=[],
+                physical_escalation_checklist=[],
+                physical_escalation_required=False,
+                stop_reason=stop_reason,
+                unknown_factors=["Dynamic hypothesis generation failed"],
+                evidence_records=[],
+            )
 
         # 3. 初始化统一排查状态机与全周期轨迹容器
         case_id = f"case_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"

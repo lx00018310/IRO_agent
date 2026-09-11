@@ -45,7 +45,8 @@ def test_dynamic_hypothesis_generation_from_llm():
     assert "变频器过载" in mgr.hypotheses[2].description
 
 
-def test_dynamic_hypothesis_fallback_when_llm_fails():
+def test_dynamic_hypothesis_fails_closed_when_llm_fails():
+    """验证当注入 glm_client 且 LLM 失败时，严格禁止静默降级到模板 (Fail Closed)"""
     mock_glm = MagicMock()
     # 模拟大模型报错或返回无效内容
     mock_glm.chat_completion.side_effect = Exception("LLM 服务暂时不可用")
@@ -56,6 +57,19 @@ def test_dynamic_hypothesis_fallback_when_llm_fails():
         glm_client=mock_glm,
     )
 
-    # 验证触发确定性降级，绝不崩溃，生成 2~6 个基础假设
+    # 验证禁止降级：状态为 error，假设为空列表
+    assert mgr.source == "error"
+    assert len(mgr.hypotheses) == 0
+
+
+def test_template_hypotheses_when_no_llm_client():
+    """验证仅在没有注入 LLM 客户端的确定性模式下，才加载工程模板假设"""
+    mgr = HypothesisManager(
+        case_type=CaseType.ROBOT_EXECUTION_ERROR,
+        symptom="机器人通信异常",
+        glm_client=None,
+    )
+
+    assert mgr.source == "deterministic_template"
     assert 2 <= len(mgr.hypotheses) <= 6
     assert any("机器人" in h.description or "信号" in h.description for h in mgr.hypotheses)

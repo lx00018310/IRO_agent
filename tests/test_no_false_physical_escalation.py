@@ -12,7 +12,7 @@ def test_no_false_physical_escalation_when_tool_fails():
         "version_current": lambda: {"version": "UNKNOWN"},
     }
 
-    harness = InvestigationHarness(tool_handlers=mock_tools)
+    harness = InvestigationHarness(tool_handlers=mock_tools, planner_mode="deterministic")
     report = harness.investigate(symptom="小车在产线静止不动")
 
     # 验证物理排查清单没有被错误生成
@@ -34,7 +34,7 @@ def test_valid_physical_escalation_only_when_digital_complete_and_normal():
         "version_current": lambda: {"version": "v1.2.0"},
     }
 
-    harness = InvestigationHarness(tool_handlers=mock_tools)
+    harness = InvestigationHarness(tool_handlers=mock_tools, planner_mode="deterministic")
     report = harness.investigate(symptom="上车小车不动，但系统无任何报错")
 
     # 此时数字各端均健康正常，符合物理升级条件
