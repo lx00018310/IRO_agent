@@ -22,6 +22,14 @@ class ModuleKnowledge(BaseModel):
     main_paths: List[str] = Field(default_factory=list)
     related_tables: List[str] = Field(default_factory=list)
     related_apis: List[str] = Field(default_factory=list)
+    entry_points: List[str] = Field(default_factory=list)
+    important_classes: List[str] = Field(default_factory=list)
+    important_services: List[str] = Field(default_factory=list)
+    important_tables: List[str] = Field(default_factory=list)
+    important_configs: List[str] = Field(default_factory=list)
+    state_transitions: List[str] = Field(default_factory=list)
+    external_dependencies: List[str] = Field(default_factory=list)
+    known_unknowns: List[str] = Field(default_factory=list)
     confidence: str = "inferred"
     sources: List[str] = Field(default_factory=list)
 
@@ -137,17 +145,21 @@ class ConfigPriorityRule(BaseModel):
 
 class BusinessFlow(BaseModel):
     """核心业务流程端到端链路模型"""
+    flow_id: str = ""
     name: str
     aliases: List[str] = Field(default_factory=list)
     entry_api: str = ""
     controller: str = ""
+    steps: List[str] = Field(default_factory=list)
     services: List[str] = Field(default_factory=list)
     mappers: List[str] = Field(default_factory=list)
     tables: List[str] = Field(default_factory=list)
     states: List[str] = Field(default_factory=list)
     configs: List[str] = Field(default_factory=list)
     external_systems: List[str] = Field(default_factory=list)
+    runtime_evidence_sources: List[str] = Field(default_factory=list)
     source_of_truth: str = ""
+    unknown_steps: List[str] = Field(default_factory=list)
     evidence: str = ""
     confidence: str = "inferred"
 
@@ -181,5 +193,9 @@ class ProjectBlueprint(BaseModel):
     source_of_truth_rules: List[SourceOfTruthRule] = Field(default_factory=list)
     code_locations: List[CodeLocation] = Field(default_factory=list)
     operational_rules: List[Dict[str, Any]] = Field(default_factory=list)
+    critic_report: Optional[Dict[str, Any]] = None
+    bootstrap_stats: Optional[Dict[str, Any]] = None
+    known_unknowns: List[str] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
+
 

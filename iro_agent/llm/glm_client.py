@@ -202,6 +202,20 @@ class GlmClient:
             {
                 "type": "function",
                 "function": {
+                    "name": "investigation_pipeline",
+                    "description": "执行假设驱动与动态优先级故障排查套件 (Investigation Harness)：针对现场异常（PLC/机器人/配置/网络/应用崩溃）制定竞争假设与证据规划，快速收敛根因，数字证据耗尽时生成现场硬件物理排查清单",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "symptom": {"type": "string", "description": "现场故障现象或疑问描述"},
+                        },
+                        "required": ["symptom"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "diagnostic_pipeline",
                     "description": "执行端到端自动化诊断流水线：自动串联聚合发布与日志时序(Timeline)、分析故障域(FaultDomain)、评估业务受损级别(P0~P3)与历史相似故障统计",
                     "parameters": {
@@ -399,3 +413,62 @@ class GlmClient:
             pass
 
         return "诊断轮次达到上限，请缩小问题范围或指定排查维度。"
+
+    def generate_text(self, prompt: str, system_prompt: Optional[str] = None, max_tokens: int = 1500) -> str:
+        """纯文本直接调用大模型 (用于无工具调用的分析与提纯)"""
+        if not self.glm_cfg.api_key or self.glm_cfg.api_key == "YOUR_GLM_API_KEY":
+            raise ValueError("未配置有效的 GLM API Key。请在 config.json 中配置 glm.api_key。")
+
+        url = f"{self.glm_cfg.api_base.rstrip('/')}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.glm_cfg.api_key}",
+            "Content-Type": "application/json",
+            "Connection": "close",
+        }
+        sys_msg = system_prompt or "你是一个严谨客观的工业系统代码架构分析专家。直接回答问题，输出准确真实结论。"
+        messages = [
+            {"role": "system", "content": sys_msg},
+            {"role": "user", "content": prompt},
+        ]
+        payload = {
+            "model": self.glm_cfg.model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": 0.1,
+        }
+
+        resp = requests.post(url, headers=headers, json=payload, timeout=self.glm_cfg.timeout)
+        resp.raise_for_status()
+        data = resp.json()
+        raw_text = data["choices"][0]["message"].get("content", "").strip()
+        return redact_secrets(raw_text)
+
+    def generate_structured_json(
+        self, prompt: str, system_prompt: Optional[str] = None, max_tokens: int = 2000
+    ) -> Dict[str, Any]:
+        """要求大模型严格输出符合 JSON 规范的结构化字典"""
+        sys_msg = (system_prompt or "") + "\n【重要指令】：必须仅输出合法的 JSON 对象，严禁包裹 markdown 代码块外的解释废话。直接以 { 开头。"
+        raw_output = self.generate_text(prompt=prompt, system_prompt=sys_msg, max_tokens=max_tokens)
+
+        # 尝试提取 json 内容
+        clean = raw_output.strip()
+        if clean.startswith("```json"):
+            clean = clean[7:]
+        elif clean.startswith("```"):
+            clean = clean[3:]
+        if clean.endswith("```"):
+            clean = clean[:-3]
+        clean = clean.strip()
+
+        # 查找首个 { 到最后一个 }
+        start_idx = clean.find("{")
+        end_idx = clean.rfind("}")
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            clean = clean[start_idx : end_idx + 1]
+
+        try:
+            return json.loads(clean)
+        except Exception as e:
+            self.audit.record(tool_name="GlmClient", operation="parse_json", result_summary=f"JSON解析异常: {e}, 原文: {raw_output[:200]}", status="WARN")
+            return {"raw_response": raw_output, "error": f"JSON parse error: {e}"}
+

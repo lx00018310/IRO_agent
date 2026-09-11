@@ -146,7 +146,24 @@ def init_agent_engine(config: IROConfig) -> GlmClient:
     client.register_tool_handler("db_query", lambda query, max_rows=20: db_reader.execute_query(query, max_rows=max_rows))
     client.register_tool_handler("diagnostic_pipeline", lambda symptom, log_keyword=None, user_message_time=None: orchestrator.run_pipeline(symptom=symptom, log_keyword=log_keyword, user_message_time=user_message_time))
 
+    from iro_agent.investigation.harness import InvestigationHarness
+    inv_harness = InvestigationHarness(audit_logger=audit)
+
+    def _run_inv(symptom: str, **kwargs):
+        rep = inv_harness.investigate(symptom=symptom)
+        return {
+            "primary_root_cause": rep.primary_root_cause,
+            "confidence": rep.confidence,
+            "key_evidence": rep.key_evidence,
+            "physical_checklist": rep.physical_escalation_checklist,
+            "stop_reason": rep.stop_reason,
+            "human_response": inv_harness.format_human_response(rep),
+        }
+
+    client.register_tool_handler("investigation_pipeline", _run_inv)
+
     return client
+
 
 
 
@@ -456,7 +473,10 @@ def cmd_init(args):
         config.project_name = args.project
     from iro_agent.knowledge.bootstrap import ProjectKnowledgeBootstrapper
     bootstrapper = ProjectKnowledgeBootstrapper(config)
-    bootstrapper.run_bootstrap(refresh=getattr(args, "refresh", False))
+    bootstrapper.run_bootstrap(
+        refresh=getattr(args, "refresh", False),
+        static_only=getattr(args, "static_only", False),
+    )
 
 
 def main():
@@ -468,6 +488,8 @@ def main():
     init_parser = subparsers.add_parser("init", help="初始化或刷新目标工程的业务认知蓝图 (Project Knowledge Bootstrap)")
     init_parser.add_argument("--project", "-p", help="指定目标工程标识/名称")
     init_parser.add_argument("--refresh", "-r", action="store_true", help="强制重新扫描并刷新已有知识蓝图")
+    init_parser.add_argument("--static-only", action="store_true", help="仅执行纯静态扫描与启发式推断，不发起 GLM 模型调用")
+
 
     # chat
     chat_parser = subparsers.add_parser("chat", help="启动交互式只读诊断会话")
