@@ -14,6 +14,8 @@ from iro_agent.evaluation.scoring import EvaluationScorer
 from iro_agent.evaluation.trajectory import TrajectoryWriter
 from iro_agent.evaluation.reporter import EvalReporter
 from iro_agent.investigation.harness import InvestigationHarness
+from iro_agent.runtime.dispatcher import RuntimeDispatcher
+from iro_agent.runtime.models import RuntimeRoute
 
 
 class EvaluationRunner:
@@ -25,11 +27,13 @@ class EvaluationRunner:
         custom_path: Optional[str] = None,
         tool_handlers: Optional[Dict[str, Any]] = None,
         output_dir: str = ".eval_runs",
+        dispatcher: Optional[RuntimeDispatcher] = None,
     ):
         self.dataset_type = dataset_type
         self.custom_path = custom_path
         self.tool_handlers = tool_handlers
         self.output_dir = Path(output_dir)
+        self.dispatcher = dispatcher
 
     def run(
         self,
@@ -60,11 +64,25 @@ class EvaluationRunner:
 
                 try:
                     # 生产 Agent Context 与评测用例期望完全隔离，Agent 严禁感知 Ground Truth
-                    harness = InvestigationHarness(tool_handlers=self.tool_handlers)
-                    report = harness.investigate(symptom=symptom, verbose=verbose)
+                    # 评测与生产统一走 RuntimeDispatcher，保障 Harness 与 Dispatch 控制逻辑完全对齐
+                    if self.dispatcher is not None:
+                        dispatcher = self.dispatcher
+                    else:
+                        harness = InvestigationHarness(tool_handlers=self.tool_handlers)
+                        dispatcher = RuntimeDispatcher(harness=harness)
+
+                    dispatch_res = dispatcher.dispatch(
+                        message=symptom,
+                        context={"verbose": verbose, "force_route": RuntimeRoute.RUNTIME_FAULT},
+                    )
+                    report = dispatch_res.investigation_report
+                    if report is None:
+                        raise RuntimeError("RuntimeDispatcher 未能返回有效的排查报告 (InvestigationReport)")
                     elapsed_ms = int((time.time() - t_start) * 1000)
 
                     eval_res = EvaluationScorer.score_case(case, report, duration_ms=elapsed_ms)
+                    if not eval_res.final_answer and dispatch_res.reply_text:
+                        eval_res.final_answer = dispatch_res.reply_text
                 except Exception as exc:
                     elapsed_ms = int((time.time() - t_start) * 1000)
                     # 评测模式下严禁静默 fallback，发生执行中断必须如实标记为 INFRA_ERROR
