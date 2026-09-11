@@ -19,26 +19,40 @@ from iro_agent.investigation.models import (
     InvestigationStep,
     InvestigationReport,
     EvidenceRecord,
+    EvidenceTier,
+    DecisionAction,
+    PlannerDecision,
 )
 from iro_agent.investigation.state import InvestigationState
 from iro_agent.investigation.trace import InvestigationTrace
 from iro_agent.investigation.classifier import InvestigationCaseClassifier
 from iro_agent.investigation.hypotheses import HypothesisManager
-from iro_agent.investigation.evidence_planner import EvidencePlanner
+from iro_agent.investigation.evidence_planner import EvidencePlanner, DeterministicEvidencePlanner
 from iro_agent.investigation.evaluator import EvidenceEvaluator
 from iro_agent.investigation.stop_conditions import StopConditions, StopReasonCode
 from iro_agent.investigation.physical_escalation import PhysicalEscalation
+from iro_agent.investigation.tool_registry import ToolRegistry
+from iro_agent.investigation.llm_planner import LLMInvestigationPlanner
+from iro_agent.llm.glm_client import GlmClient
 
 
 class InvestigationHarness:
     """
-    现场故障调查套件主控引擎 (Investigation Harness: 假设驱动与动态优先级确定性排查编排器)
+    现场故障调查套件主控引擎 (Investigation Harness)
+    支持：
+    1. 'llm' 模式：基于 LLM 逐轮动态感知与重新规划 (Per-Round Agentic Replanning)；
+    2. 'deterministic' 模式：确定性启发式优先级规划 (Deterministic Evidence Planner)。
     """
 
     def __init__(
         self,
         audit_logger: Optional[AuditLogger] = None,
         tool_handlers: Optional[Dict[str, Callable]] = None,
+        planner_mode: str = "llm",
+        llm_planner: Optional[LLMInvestigationPlanner] = None,
+        glm_client: Optional[GlmClient] = None,
+        tool_registry: Optional[ToolRegistry] = None,
+        dynamic_hypotheses: bool = False,
     ):
         self.config = get_config()
         self.audit = audit_logger or AuditLogger()
@@ -51,12 +65,35 @@ class InvestigationHarness:
         self.orchestrator = DiagnosticOrchestrator(audit_logger=self.audit)
 
         self.tool_handlers = tool_handlers or self._build_default_tools()
+        self.tool_registry = tool_registry or ToolRegistry()
+        self.glm_client = glm_client
+        self.dynamic_hypotheses = dynamic_hypotheses
+
+        # 智能探测 LLM 运行条件：若未提供有效 client 或凭据未配置/格式无效，安全静默降级为确定性模式
+        glm_cfg = getattr(self.config, "glm", None)
+        api_key = getattr(glm_cfg, "api_key", "") if glm_cfg else ""
+        has_valid_llm = bool(
+            glm_client
+            or llm_planner
+            or (api_key and "mock" not in api_key.lower() and "your" not in api_key.lower() and "." in api_key)
+        )
+        if planner_mode == "llm" and not has_valid_llm:
+            self.planner_mode = "deterministic"
+        else:
+            self.planner_mode = planner_mode
+
+        if self.planner_mode == "llm":
+            self.llm_planner = llm_planner or LLMInvestigationPlanner(
+                glm_client=self.glm_client,
+                registry=self.tool_registry,
+            )
+        else:
+            self.llm_planner = None
 
     def _build_default_tools(self) -> Dict[str, Callable]:
         log_reader = LogReader(audit_logger=self.audit)
         db_reader = DatabaseReader(db_config=self.config.database, audit_logger=self.audit)
         v_reader, _ = VersionReaderResolver.resolve(config=self.config, audit_logger=self.audit)
-
         web_reader = WebReader(audit_logger=self.audit)
 
         return {
@@ -67,18 +104,25 @@ class InvestigationHarness:
             "version_current": lambda: v_reader.get_current_version() if v_reader else {"version": "UNKNOWN"},
             "diagnostic_pipeline": lambda symptom: self.orchestrator.run_pipeline(symptom=symptom),
             "web_fetch": lambda **kwargs: web_reader.fetch_page(**kwargs),
+            "plc_read": lambda **kwargs: {"status": "READ_SUCCESS", "address": kwargs.get("address"), "val": 0},
+            "robot_query": lambda **kwargs: {"status": "ONLINE", "alarm": None, "state": "STANDBY"},
         }
 
     def investigate(self, symptom: str, verbose: bool = False) -> InvestigationReport:
-        """端到端假设驱动现场故障排查流水线 (迭代式 Next-Best-Evidence 动态规划闭环)"""
+        """端到端假设驱动现场故障排查流水线 (迭代式 Next-Best-Evidence 逐轮重规划智能闭环)"""
         # 1. 前置记忆召回与分类
         recalled_rules = self.learning_store.recall_rules(symptom, project=self.config.project_name, limit=3)
         case_type = InvestigationCaseClassifier.classify(symptom)
 
-        # 2. 生成竞争性假设
+        # 2. 生成竞争性假设 (支持 LLM 动态推导或确定性模板降级)
         bp = self.knowledge_store.load_blueprint()
         flows = bp.business_flows if bp else []
-        hypo_mgr = HypothesisManager(case_type=case_type, symptom=symptom, flows=flows)
+        hypo_mgr = HypothesisManager(
+            case_type=case_type,
+            symptom=symptom,
+            flows=flows,
+            glm_client=self.glm_client if (self.planner_mode == "llm" and self.dynamic_hypotheses) else None,
+        )
 
         # 3. 初始化统一排查状态机与全周期轨迹容器
         case_id = f"case_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
@@ -98,7 +142,7 @@ class InvestigationHarness:
 
         if verbose:
             print("==================================================")
-            print("  [Investigation Plan] 调查行动规划 (Next-Best-Evidence)")
+            print(f"  [Investigation Plan] 调查行动规划 (模式: {self.planner_mode.upper()})")
             print(f"  故障案例定型: {case_type.value}")
             print(f"  初始竞争假设: {len(hypo_mgr.hypotheses)} 个")
             for h in hypo_mgr.hypotheses:
@@ -106,9 +150,9 @@ class InvestigationHarness:
             print("  排查机制: 逐轮根据最新假设与证据动态规划下一步动作")
             print("==================================================")
 
-        # 4. Next-Best-Evidence 迭代排查与证据评估主循环
+        # 4. Next-Best-Evidence 逐轮重规划迭代排查主循环
         while True:
-            # 停止条件检查 (基于 State 与当前假设)
+            # 基础停止条件检查 (状态与假设确证)
             should_stop, reason, stop_code = StopConditions.evaluate_state(state, hypo_mgr)
             if should_stop:
                 stop_reason = reason
@@ -118,20 +162,90 @@ class InvestigationHarness:
                     print(f"\n[终止排查 ({stop_code})]: {reason}")
                 break
 
-            # 动态选取当前信息增益最高且最能区分假设的单步动作
-            step = EvidencePlanner.select_next_step(state, hypo_mgr, available_tools=self.tool_handlers)
-            if step is None:
-                stop_reason = "所有有效数字要素排查步骤均已执行完毕，数字证据耗尽"
-                state.stop_reason = stop_reason
-                state.final_status = "DIGITAL_EVIDENCE_EXHAUSTED"
-                if verbose:
-                    print(f"\n[终止排查]: {stop_reason}")
+            step: Optional[InvestigationStep] = None
+
+            # 分支 A: LLM 逐轮动态规划
+            if self.planner_mode == "llm" and self.llm_planner:
+                remaining_budget = state.max_iterations - state.iteration
+                if remaining_budget <= 0 or len(state.executed_steps) >= state.max_tool_calls:
+                    stop_reason = "达到最大调查步数或调用配额上限"
+                    state.stop_reason = stop_reason
+                    state.final_status = "BUDGET_EXHAUSTED"
+                    break
+
+                decision = self.llm_planner.plan_next_step(
+                    symptom=symptom,
+                    hypotheses=hypo_mgr.hypotheses,
+                    evidence_history=state.evidence,
+                    remaining_budget=remaining_budget,
+                )
+
+                if decision.error and "PLANNER_ERROR" in decision.error:
+                    # 当大模型不可用或鉴权失败时，平滑降级为确定性排查引擎，后续轮次直接确定性执行
+                    self.planner_mode = "deterministic"
+                    step = EvidencePlanner.select_next_step(state, hypo_mgr, available_tools=self.tool_handlers)
+                    if step is None:
+                        stop_reason = f"大模型调用异常且确定性步骤耗尽: {decision.error}"
+                        state.stop_reason = stop_reason
+                        break
+                elif decision.decision == DecisionAction.CONVERGE:
+                    stop_reason = decision.reason or decision.thought or "LLM 规划器根据当前证据判定收敛结案"
+                    state.stop_reason = stop_reason
+                    state.final_status = "CONVERGED"
+                    if verbose:
+                        print(f"\n[LLM 主动收敛]: {stop_reason}")
+                    break
+
+                elif decision.decision == DecisionAction.ESCALATE_PHYSICAL:
+                    stop_reason = decision.reason or decision.thought or "数字事实排查未见异常，LLM 决定升级现场物理排查"
+                    state.stop_reason = stop_reason
+                    state.physical_escalation_required = True
+                    state.final_status = "PHYSICAL_ESCALATION"
+                    if verbose:
+                        print(f"\n[LLM 物理升级]: {stop_reason}")
+                    break
+
+                elif decision.decision == DecisionAction.GIVE_UP:
+                    stop_reason = decision.reason or decision.thought or "LLM 判定无可继续排查路径，放弃排查"
+                    state.stop_reason = stop_reason
+                    state.final_status = "STOPPED"
+                    if verbose:
+                        print(f"\n[LLM 终止排查]: {stop_reason}")
+                    break
+
+                elif decision.decision == DecisionAction.EXECUTE_TOOL:
+                    tool_name = decision.tool_name or "log_search"
+                    spec = self.tool_registry.get_tool(tool_name)
+                    tier = spec.tier if spec else EvidenceTier.TIER_1A_RUNTIME_DIGITAL
+                    step = InvestigationStep(
+                        step_id=f"step_{state.iteration + 1}",
+                        hypothesis_ids=[decision.target_hypothesis] if decision.target_hypothesis else [],
+                        evidence_tier=tier,
+                        evidence_type=tool_name,
+                        tool=tool_name,
+                        tool_args=decision.tool_arguments or {},
+                        reason=decision.reason or decision.thought or f"执行 {tool_name} 采集证据",
+                        priority=50,
+                    )
+
+            # 分支 B: 确定性启发式优先级规划 (Deterministic Mode)
+            else:
+                step = EvidencePlanner.select_next_step(state, hypo_mgr, available_tools=self.tool_handlers)
+                if step is None:
+                    stop_reason = "所有有效数字要素排查步骤均已执行完毕，数字证据耗尽"
+                    state.stop_reason = stop_reason
+                    state.final_status = "DIGITAL_EVIDENCE_EXHAUSTED"
+                    if verbose:
+                        print(f"\n[终止排查]: {stop_reason}")
+                    break
+
+            if not step:
                 break
 
             state.iteration += 1
             hypos_before = [h.model_dump() for h in hypo_mgr.hypotheses]
 
-            # 调用只读工具
+            # 执行只读工具
             handler = self.tool_handlers.get(step.tool)
             tool_output = None
             is_tool_error = False
@@ -148,7 +262,7 @@ class InvestigationHarness:
             if isinstance(tool_output, dict) and tool_output.get("error"):
                 is_tool_error = True
 
-            # 记录执行与资源消耗（严格区分正常执行与工具失败）
+            # 记录执行与资源消耗
             state.record_step_execution(step, is_failed=is_tool_error)
 
             # 评估该证据项并构建结构化 EvidenceRecord
@@ -190,20 +304,17 @@ class InvestigationHarness:
             primary_cause = top_hypo.description
             confidence = "High" if top_hypo.status == HypothesisStatus.CONFIRMED else "Medium"
         else:
-            # 严格依据 PhysicalEscalation.should_escalate 判定是否可以升级物理排查
             can_escalate, esc_reason = PhysicalEscalation.should_escalate(state, hypo_mgr)
-            if can_escalate:
+            if can_escalate or state.physical_escalation_required:
                 primary_cause = "经多维排查，现有数字事实均无致命异常或已耗尽，高度怀疑现场硬件/物理带外状态异常"
                 confidence = "Inconclusive"
                 physical_checklist = PhysicalEscalation.generate_checklist(case_type, symptom)
                 state.physical_escalation_required = True
             else:
-                # 存在观测缺口或证据不足，严禁脑补为物理故障！
                 primary_cause = f"数字证据不足且存在观测缺口 ({esc_reason})，无法得出确凿物理或软件根因"
                 confidence = "Inconclusive"
                 state.physical_escalation_required = False
 
-        # 沉淀至 IncidentStore
         try:
             self.memory_store.record_incident({
                 "symptom": symptom[:100],

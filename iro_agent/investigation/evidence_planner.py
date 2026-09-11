@@ -324,3 +324,7 @@ class EvidencePlanner:
         best_cand.step_id = f"step_{executed_len + 1}"
         return best_cand
 
+
+# 别名保留以供确定性对比、脱机模式与历史基线
+DeterministicEvidencePlanner = EvidencePlanner
+
