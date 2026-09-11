@@ -260,7 +260,7 @@ class GlmClient:
                 "type": "function",
                 "function": {
                     "name": "web_fetch",
-                    "description": "安全只读抓取外部或内网工控网页、调度日志页面 (如 http://10.100.139.170)。支持可选账号密码登录、关键词过滤与正文提取",
+                    "description": "安全通用只读网页探针：支持各类外部或内网工控系统、调度日志页面 (如 DevExpress WES、Vue、React、ASP.NET、Prometheus API 等)。具备无头浏览器真实渲染、Cookie会话维持、表单登录、表格自动转Markdown及后台接口嗅探能力",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -268,6 +268,8 @@ class GlmClient:
                             "keyword": {"type": "string", "description": "可选过滤关键词 (如 ERROR, dispatch, 11号月台)"},
                             "username": {"type": "string", "description": "可选身份验证用户名 (如 admin)"},
                             "password": {"type": "string", "description": "可选密码 (若为空可传空字符串)"},
+                            "cookies": {"type": "string", "description": "可选 Cookie 字符串或已登录凭据 (如 ASP.NET_SessionId=xxx; token=yyy)，用于绕过登录直接只读访问目标系统内部页面"},
+                            "mode": {"type": "string", "enum": ["auto", "browser", "http"], "description": "可选抓取模式: auto(自适应升级, 默认), browser(强制无头浏览器真实渲染), http(极速HTTP模式)"},
                         },
                         "required": ["url"],
                     },
