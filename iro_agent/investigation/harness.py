@@ -313,12 +313,26 @@ class InvestigationHarness:
                         print(f"\n[规划器严重异常终止]: {stop_reason}")
                     break
                 elif decision.decision == DecisionAction.CONVERGE:
-                    stop_reason = decision.reason or decision.thought or "LLM 规划器根据当前证据判定收敛结案"
-                    state.stop_reason = stop_reason
-                    state.final_status = "CONVERGED"
-                    if verbose:
-                        print(f"\n[LLM 主动收敛]: {stop_reason}")
-                    break
+                    can_converge, verdict, guardrail_reason = StopConditions.validate_convergence(state, hypo_mgr)
+                    if can_converge:
+                        stop_reason = decision.reason or decision.thought or f"Harness 批准收敛结案 ({verdict})"
+                        state.stop_reason = stop_reason
+                        state.final_status = "CONVERGED"
+                        if verbose:
+                            print(f"\n[Harness 批准收敛 ({verdict})]: {stop_reason}")
+                        break
+                    else:
+                        state.record_rejected_convergence(guardrail_reason)
+                        if verbose:
+                            print(f"\n[Harness 拦截未合规收敛]: {guardrail_reason}")
+                        # 防无限循环：连续 2 次被拒绝且无新证据增加
+                        if state.consecutive_rejected_convergences >= 2:
+                            stop_reason = f"收敛申请未通过安全防护 ({guardrail_reason})，证据不足且未产生新事实 (STOP_INSUFFICIENT_EVIDENCE)"
+                            state.stop_reason = stop_reason
+                            state.final_status = "INSUFFICIENT_EVIDENCE"
+                            break
+                        state.iteration += 1
+                        continue
 
                 elif decision.decision == DecisionAction.ESCALATE_PHYSICAL:
                     can_escalate, guardrail_reason = PhysicalEscalation.should_escalate(state, hypo_mgr)
@@ -444,9 +458,12 @@ class InvestigationHarness:
         primary_cause = None
         confidence = "Medium"
 
-        if top_hypo and top_hypo.status in (HypothesisStatus.CONFIRMED, HypothesisStatus.STRONGLY_SUPPORTED):
-            primary_cause = top_hypo.description
-            confidence = "High" if top_hypo.status == HypothesisStatus.CONFIRMED else "Medium"
+        if top_hypo and top_hypo.status == HypothesisStatus.CONFIRMED:
+            primary_cause = f"已确认核心根因: {top_hypo.description}"
+            confidence = "High"
+        elif top_hypo and top_hypo.status == HypothesisStatus.STRONGLY_SUPPORTED:
+            primary_cause = f"当前最可能原因: {top_hypo.description}"
+            confidence = "Medium"
         elif state.final_status == "PLANNER_ERROR":
             primary_cause = f"排查规划异常: {stop_reason}"
             confidence = "Low"

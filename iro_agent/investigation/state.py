@@ -39,6 +39,19 @@ class InvestigationState(BaseModel):
     physical_escalation_required: bool = False
     unknown_factors: List[str] = Field(default_factory=list)
     rejected_escalations: List[str] = Field(default_factory=list)
+    rejected_convergences: List[str] = Field(default_factory=list)
+    consecutive_rejected_convergences: int = 0
+    last_evidence_count_at_rejection: int = 0
+
+    def record_rejected_convergence(self, reason: str) -> None:
+        """记录被安全防护拦截的非法/不达标收敛请求"""
+        self.rejected_convergences.append(reason)
+        if len(self.evidence) == self.last_evidence_count_at_rejection:
+            self.consecutive_rejected_convergences += 1
+        else:
+            self.consecutive_rejected_convergences = 1
+        self.last_evidence_count_at_rejection = len(self.evidence)
+        self.unknown_factors.append(f"收敛请求被安全防护拦截: {reason}")
 
     def record_rejected_escalation(self, reason: str) -> None:
         """记录被安全防护拦截的物理升级请求"""
