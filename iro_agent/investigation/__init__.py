@@ -16,7 +16,7 @@ from iro_agent.investigation.llm_planner import LLMInvestigationPlanner
 from iro_agent.investigation.state import InvestigationState
 from iro_agent.investigation.trace import InvestigationTrace, TraceIteration
 from iro_agent.investigation.classifier import InvestigationCaseClassifier
-from iro_agent.investigation.hypotheses import HypothesisManager
+from iro_agent.investigation.hypotheses import HypothesisManager, DynamicHypothesisGenerator
 from iro_agent.investigation.priorities import PriorityCalculator
 from iro_agent.investigation.evidence_planner import EvidencePlanner
 from iro_agent.investigation.evaluator import EvidenceEvaluator
@@ -44,6 +44,7 @@ __all__ = [
     "TraceIteration",
     "InvestigationCaseClassifier",
     "HypothesisManager",
+    "DynamicHypothesisGenerator",
     "PriorityCalculator",
     "EvidencePlanner",
     "EvidenceEvaluator",

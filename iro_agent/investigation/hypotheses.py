@@ -1,18 +1,268 @@
+import json
+import re
+import logging
 from typing import List, Dict, Any, Optional
 from iro_agent.investigation.models import CaseType, Hypothesis, HypothesisStatus
+from iro_agent.llm.glm_client import GlmClient
+
+logger = logging.getLogger(__name__)
+
+
+class DynamicHypothesisGenerator:
+    """
+    LLM 动态竞争性假设推演生成器 (Dynamic Hypothesis Generator)
+    由 LLM 根据现场真实故障表象 (Symptom) + 领域业务流程定义 (Flows) 动态推导生成 2~5 个互相排斥或竞争的根因假设。
+    """
+
+    PROMPT_TEMPLATE = """你是一个工业自动化与现场系统（PLC、机器人、调度系统、数据库、通信接口）排查归因专家。
+请根据现场故障现象与已知业务流，推演提出 2~5 个具有竞争性、逻辑互斥且可验证的根因排查假设。
+
+【现场故障现象 (Symptom)】
+{symptom}
+
+【系统已知业务流程环节】
+{flows_text}
+
+【输出要求】
+你必须且仅输出一个合法的 JSON 数组，数组中包含 2~5 个假设对象。每个对象的格式如下：
+```json
+[
+  {{
+    "hypothesis_id": "H1",
+    "description": "假设描述（明确指明哪个环节、设备或模块出现何种问题）",
+    "related_flow_step": "关联的业务流步骤或系统组件",
+    "required_evidence": ["需要检验的客观证据1", "需要检验的客观证据2"]
+  }}
+]
+```
+"""
+
+    @classmethod
+    def generate_from_llm(
+        cls,
+        symptom: str,
+        flows: Optional[List[Any]] = None,
+        glm_client: Optional[GlmClient] = None,
+    ) -> Optional[List[Hypothesis]]:
+        """调用大模型动态生成竞争假设"""
+        if not glm_client:
+            return None
+
+        flows_lines = []
+        for f in flows or []:
+            name = getattr(f, "name", str(f))
+            desc = getattr(f, "description", "")
+            flows_lines.append(f"- {name}: {desc}")
+        flows_text = "\n".join(flows_lines) if flows_lines else "（标准出入库与现场工控调度流）"
+
+        prompt = cls.PROMPT_TEMPLATE.format(symptom=symptom, flows_text=flows_text)
+        messages = [
+            {"role": "system", "content": "你是一个严谨的工业现场根因假设生成器，只能输出规范的单一 JSON 数组。"},
+            {"role": "user", "content": prompt},
+        ]
+
+        try:
+            raw_reply = glm_client.chat_completion(messages, verbose=False)
+            if not raw_reply:
+                return None
+
+            match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw_reply.strip())
+            if match:
+                raw_json = match.group(1).strip()
+            else:
+                start = raw_reply.find("[")
+                end = raw_reply.rfind("]")
+                if start != -1 and end != -1 and end > start:
+                    raw_json = raw_reply[start : end + 1]
+                else:
+                    raw_json = raw_reply
+
+            data = json.loads(raw_json)
+            if not isinstance(data, list) or not data:
+                return None
+
+            hypos: List[Hypothesis] = []
+            for idx, item in enumerate(data, start=1):
+                h_id = item.get("hypothesis_id") or f"H{idx}"
+                desc = item.get("description") or f"动态假设 {h_id}"
+                step = item.get("related_flow_step") or ""
+                req_ev = item.get("required_evidence") or []
+                hypos.append(Hypothesis(
+                    hypothesis_id=h_id,
+                    description=desc,
+                    related_flow_step=step,
+                    required_evidence=req_ev,
+                    status=HypothesisStatus.UNRESOLVED,
+                ))
+
+            if len(hypos) >= 2:
+                logger.info(f"[HypothesisGenerator] 成功由 LLM 动态推导生成 {len(hypos)} 个竞争假设")
+                return hypos
+
+        except Exception as e:
+            logger.warning(f"[HypothesisGenerator] LLM 动态推导假设失败，将安全降级: {e}")
+
+        return None
 
 
 class HypothesisManager:
-    """竞争性假设管理器 (Hypothesis Manager: 2~6 个候选假设生命周期)"""
+    """
+    竞争性假设生命周期状态机管理器 (Hypothesis Lifecycle State Machine)
+    支持：
+    1. 初始假设的动态推演生成与确定性降级初始化；
+    2. 假设生命周期的动态追加 (add)、动态修订 (revise) 与动态淘汰归档 (retire)；
+    3. 状态跃迁流转 (UNRESOLVED -> SUPPORTED -> STRONGLY_SUPPORTED -> CONFIRMED / RULED_OUT)。
+    """
 
-    def __init__(self, case_type: CaseType, symptom: str, flows: Optional[List[Any]] = None):
-        self.case_type = case_type
+    def __init__(
+        self,
+        case_type: Optional[CaseType] = None,
+        symptom: str = "",
+        flows: Optional[List[Any]] = None,
+        initial_hypotheses: Optional[List[Hypothesis]] = None,
+        glm_client: Optional[GlmClient] = None,
+    ):
+        self.case_type = case_type or CaseType.UNKNOWN_RUNTIME_FAULT
         self.symptom = symptom
         self.flows = flows or []
-        self.hypotheses: List[Hypothesis] = self._generate_initial_hypotheses()
+        self.glm_client = glm_client
 
-    def _generate_initial_hypotheses(self) -> List[Hypothesis]:
-        """依据故障类别与业务流链条生成初始竞争性假设 (2~6个)"""
+        if initial_hypotheses:
+            self.hypotheses = list(initial_hypotheses)
+        else:
+            # 优先尝试 LLM 动态生成
+            dynamic_hypos = None
+            if self.glm_client and self.symptom:
+                dynamic_hypos = DynamicHypothesisGenerator.generate_from_llm(
+                    symptom=self.symptom,
+                    flows=self.flows,
+                    glm_client=self.glm_client,
+                )
+
+            if dynamic_hypos:
+                self.hypotheses = dynamic_hypos
+            else:
+                self.hypotheses = self._generate_fallback_hypotheses()
+
+    @property
+    def active_hypotheses(self) -> List[Hypothesis]:
+        """获取所有当前活跃未被排除的假设"""
+        return [h for h in self.hypotheses if h.status != HypothesisStatus.RULED_OUT]
+
+    @property
+    def retired_hypotheses(self) -> List[Hypothesis]:
+        """获取所有已被推翻淘汰的假设"""
+        return [h for h in self.hypotheses if h.status == HypothesisStatus.RULED_OUT]
+
+    def add_hypothesis(
+        self,
+        description: str,
+        related_flow_step: str = "",
+        required_evidence: Optional[List[str]] = None,
+        hypothesis_id: Optional[str] = None,
+    ) -> str:
+        """
+        在排查过程中动态追加新推导出的假设
+        """
+        existing_ids = {h.hypothesis_id for h in self.hypotheses}
+        if not hypothesis_id or hypothesis_id in existing_ids:
+            idx = len(self.hypotheses) + 1
+            while f"H{idx}" in existing_ids:
+                idx += 1
+            hypothesis_id = f"H{idx}"
+
+        new_h = Hypothesis(
+            hypothesis_id=hypothesis_id,
+            description=description,
+            related_flow_step=related_flow_step,
+            required_evidence=required_evidence or [],
+            status=HypothesisStatus.UNRESOLVED,
+        )
+        self.hypotheses.append(new_h)
+        logger.info(f"[HypothesisManager] 动态追加新假设 [{hypothesis_id}]: {description}")
+        return hypothesis_id
+
+    def retire_hypothesis(self, hypothesis_id: str, reason: str, evidence: Optional[str] = None) -> bool:
+        """动态淘汰/排除某个假设"""
+        return self.rule_out(hypothesis_id, reason, evidence)
+
+    def revise_hypothesis(
+        self,
+        hypothesis_id: str,
+        new_description: Optional[str] = None,
+        new_required_evidence: Optional[List[str]] = None,
+    ) -> bool:
+        """动态修订假设的描述或检验证据要求"""
+        h = self.get_hypothesis(hypothesis_id)
+        if not h:
+            return False
+        if new_description:
+            h.description = new_description
+        if new_required_evidence is not None:
+            h.required_evidence = list(new_required_evidence)
+        logger.info(f"[HypothesisManager] 修订假设 [{hypothesis_id}] 内容")
+        return True
+
+    def get_hypothesis(self, h_id: str) -> Optional[Hypothesis]:
+        for h in self.hypotheses:
+            if h.hypothesis_id == h_id:
+                return h
+        return None
+
+    def update_status(
+        self,
+        hypothesis_id: str,
+        new_status: HypothesisStatus,
+        reason: str,
+        evidence: Optional[str] = None,
+    ) -> bool:
+        h = self.get_hypothesis(hypothesis_id)
+        if not h:
+            return False
+
+        h.status = new_status
+        if new_status in (HypothesisStatus.CONFIRMED, HypothesisStatus.STRONGLY_SUPPORTED, HypothesisStatus.SUPPORTED):
+            if evidence and evidence not in h.supporting_evidence:
+                h.supporting_evidence.append(evidence)
+            h.confidence = "High" if new_status == HypothesisStatus.CONFIRMED else "Medium"
+        elif new_status == HypothesisStatus.RULED_OUT:
+            if evidence and evidence not in h.contradicting_evidence:
+                h.contradicting_evidence.append(evidence)
+            h.confidence = "RuledOut"
+        return True
+
+    def rule_out(self, hypothesis_id: str, reason: str, evidence: Optional[str] = None) -> bool:
+        return self.update_status(hypothesis_id, HypothesisStatus.RULED_OUT, reason, evidence)
+
+    def confirm(self, hypothesis_id: str, reason: str, evidence: Optional[str] = None) -> bool:
+        return self.update_status(hypothesis_id, HypothesisStatus.CONFIRMED, reason, evidence)
+
+    def strongly_support(self, hypothesis_id: str, reason: str, evidence: Optional[str] = None) -> bool:
+        return self.update_status(hypothesis_id, HypothesisStatus.STRONGLY_SUPPORTED, reason, evidence)
+
+    def get_top_hypothesis(self) -> Optional[Hypothesis]:
+        """获取当前综合评级最高的活动假设"""
+        order = {
+            HypothesisStatus.CONFIRMED: 10,
+            HypothesisStatus.STRONGLY_SUPPORTED: 8,
+            HypothesisStatus.SUPPORTED: 5,
+            HypothesisStatus.UNRESOLVED: 2,
+            HypothesisStatus.WEAK: 1,
+            HypothesisStatus.RULED_OUT: 0,
+        }
+        active = self.active_hypotheses
+        if not active:
+            return None
+        return max(active, key=lambda h: (order.get(h.status, 0), len(h.supporting_evidence)))
+
+    def has_confirmed_hypothesis(self) -> bool:
+        return any(h.status == HypothesisStatus.CONFIRMED for h in self.hypotheses)
+
+    def has_strongly_supported_hypothesis(self) -> bool:
+        return any(h.status == HypothesisStatus.STRONGLY_SUPPORTED for h in self.hypotheses)
+
+    def _generate_fallback_hypotheses(self) -> List[Hypothesis]:
+        """离线或确定性降级保障：依据故障类别与业务流链条生成初始竞争性假设 (2~5个)"""
         hypos: List[Hypothesis] = []
 
         if self.case_type == CaseType.ROBOT_EXECUTION_ERROR:
@@ -170,60 +420,3 @@ class HypothesisManager:
             )
 
         return hypos
-
-    def get_hypothesis(self, h_id: str) -> Optional[Hypothesis]:
-        for h in self.hypotheses:
-            if h.hypothesis_id == h_id:
-                return h
-        return None
-
-    def update_status(
-        self,
-        hypothesis_id: str,
-        new_status: HypothesisStatus,
-        reason: str,
-        evidence: Optional[str] = None,
-    ) -> None:
-        h = self.get_hypothesis(hypothesis_id)
-        if not h:
-            return
-
-        h.status = new_status
-        if new_status in (HypothesisStatus.CONFIRMED, HypothesisStatus.STRONGLY_SUPPORTED, HypothesisStatus.SUPPORTED):
-            if evidence and evidence not in h.supporting_evidence:
-                h.supporting_evidence.append(evidence)
-            h.confidence = "High" if new_status == HypothesisStatus.CONFIRMED else "Medium"
-        elif new_status == HypothesisStatus.RULED_OUT:
-            if evidence and evidence not in h.contradicting_evidence:
-                h.contradicting_evidence.append(evidence)
-            h.confidence = "RuledOut"
-
-    def rule_out(self, hypothesis_id: str, reason: str, evidence: Optional[str] = None) -> None:
-        self.update_status(hypothesis_id, HypothesisStatus.RULED_OUT, reason, evidence)
-
-    def confirm(self, hypothesis_id: str, reason: str, evidence: Optional[str] = None) -> None:
-        self.update_status(hypothesis_id, HypothesisStatus.CONFIRMED, reason, evidence)
-
-    def strongly_support(self, hypothesis_id: str, reason: str, evidence: Optional[str] = None) -> None:
-        self.update_status(hypothesis_id, HypothesisStatus.STRONGLY_SUPPORTED, reason, evidence)
-
-    def get_top_hypothesis(self) -> Optional[Hypothesis]:
-        # 优先级：CONFIRMED > STRONGLY_SUPPORTED > SUPPORTED > UNRESOLVED
-        order = {
-            HypothesisStatus.CONFIRMED: 10,
-            HypothesisStatus.STRONGLY_SUPPORTED: 8,
-            HypothesisStatus.SUPPORTED: 5,
-            HypothesisStatus.UNRESOLVED: 2,
-            HypothesisStatus.WEAK: 1,
-            HypothesisStatus.RULED_OUT: 0,
-        }
-        active = [h for h in self.hypotheses if h.status != HypothesisStatus.RULED_OUT]
-        if not active:
-            return None
-        return max(active, key=lambda h: (order.get(h.status, 0), len(h.supporting_evidence)))
-
-    def has_confirmed_hypothesis(self) -> bool:
-        return any(h.status == HypothesisStatus.CONFIRMED for h in self.hypotheses)
-
-    def has_strongly_supported_hypothesis(self) -> bool:
-        return any(h.status == HypothesisStatus.STRONGLY_SUPPORTED for h in self.hypotheses)
