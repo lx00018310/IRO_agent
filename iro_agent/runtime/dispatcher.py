@@ -55,11 +55,11 @@ class RuntimeDispatcher:
         if any(fm in msg_lower for fm in fact_markers):
             return RuntimeRoute.FACT_QUERY
 
-        # 兜底检测强故障动词
         fault_markers = [
             "卡死", "卡住", "不动了", "不走", "停止", "报错", "异常",
             "掉线", "中断", "失败", "超时", "死锁", "坏了", "为什么",
-            "408", "500", "502", "npe", "connection reset"
+            "408", "500", "502", "npe", "connection reset",
+            "报警", "停机", "告警", "丢包", "无法", "顿挫", "抖动", "漂移", "脏污", "减速"
         ]
         if any(m in msg_lower for m in fault_markers):
             return RuntimeRoute.RUNTIME_FAULT

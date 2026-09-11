@@ -3,7 +3,7 @@
 > **IRO_agent is an evidence-driven industrial diagnosis harness.**  
 > It learns a project's operational model, investigates incidents through iterative evidence gathering, and evaluates its own diagnosis quality through reproducible datasets.
 
-[![Tests](https://img.shields.io/badge/tests-138%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-167%20passed-brightgreen.svg)]()
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)]()
 [![Security](https://img.shields.io/badge/boundary-Strict%20Read--Only-red.svg)]()
 
@@ -20,10 +20,10 @@
 │ Project Learning       │ Investigation         │ Evaluation            │
 │ Harness                │ Harness               │ Harness               │
 ├────────────────────────┼───────────────────────┼───────────────────────┤
-│ • Unknown 一等对象     │ • Next-Best-Evidence  │ • 确定性 Grader       │
-│ • 10 维知识覆盖度跟踪  │ • 动态再规划 (Re-plan)│ • 证据锚定度评分      │
-│ • 多轮迭代代码精读     │ • 物理故障升级与收敛  │ • 路径质量与安全审计  │
-│ • 置信度校准与防污染   │ • 内部状态轨迹溯源    │ • DEV / REGRESSION 库 │
+│ • Unknown 一等对象     │ • 逐轮动态重规划      │ • 生产同构 Dispatcher │
+│ • 10 维知识覆盖度跟踪  │ • 假设全生命周期状态机│ • 确定性 Grader       │
+│ • 多轮迭代代码精读     │ • 事实与因果解耦抽取  │ • 证据锚定度评分      │
+│ • 置信度校准与防污染   │ • 只读工具安全硬门槛  │ • DEV / REGRESSION 库 │
 └────────────────────────┴───────────────────────┴───────────────────────┘
 ```
 
@@ -35,10 +35,12 @@
 
 ## 核心子系统架构
 
-### 1. Investigation Harness (迭代式排查系统)
-- **动态状态机 (`InvestigationState`)**：跟踪假设空间、证据链条、工具调用开销与排查轨迹。
-- **Next-Best-Evidence 规划器**：依据假设区分增益（Discrimination Gain）、证据新鲜度与重复调用惩罚，自适应决定下一有效探查动作。
-- **状态驱动停止条件 (`StopConditions`)**：收敛判定、最大步数限制与预算保护，告别硬编码固定顺序。
+### 1. Investigation Harness (逐轮动态重规划排查系统)
+- **统一运行时分发器 (`RuntimeDispatcher`)**：飞书网关、CLI 诊断会话、直接排查命令与基准评测全面归一，故障强制接入 Harness。
+- **逐轮重规划引擎 (`LLMInvestigationPlanner`)**：每轮基于最新动态证据重新调用大模型决策，严禁固定步骤单向流。
+- **权限与 Schema 硬防线 (`PlannerValidator`)**：严格校验 JSON Schema、工具只读白名单、入参模型与步数预算，非法操作物理阻断。
+- **竞争假设生命周期 (`HypothesisManager`)**：支持 2~5 个假设的首轮推演生成及后续增、删、改、并、弃全生命周期流转。
+- **事实与因果解耦 (`EvidenceEvaluator`)**：区分证据事实抽取与根因推断，超时与断连准确识别为 `OBSERVABILITY_GAP`。
 
 ### 2. Project Learning Harness (项目认知学习系统)
 - **Unknown 一等对象 (`KnowledgeUnknown`)**：显式建模业务流盲区、硬件交互不确定性及配置差异。
@@ -173,7 +175,7 @@ python -m iro_agent.cli eval external --dataset-dir /path/to/blind_cases
 ```bash
 pytest -q
 ```
-当前工程包含 138 项针对状态机、证据规划、停止条件、覆盖度学习及评测 Grader 的自动化测试，保持 100% 通过。
+当前工程包含 167 项针对状态机、动态重规划、假设生命周期、安全校验与端到端同构分发的自动化测试，保持 100% 通过。
 
 ### 7. 工控机版本更新与快捷启动
 
@@ -192,16 +194,22 @@ pytest -q
 
 ```text
 iro_agent/
-├── investigation/              # Investigation Harness
-│   ├── harness.py              # 核心闭环驱动引擎
-│   ├── state.py                # 动态排查状态机
-│   ├── evidence_planner.py     # Next-Best-Evidence 动态规划器
-│   ├── priorities.py           # 假设区分增益与动态优先级
-│   ├── stop_conditions.py      # 状态驱动停止判定
-│   ├── trace.py                # 完整排查轨迹记录
-│   └── physical_escalation.py  # 真实物理升级判定
+├── runtime/                    # 统一运行时分发系统
+│   ├── dispatcher.py           # 企业级统一运行时消息与故障分发器
+│   └── models.py               # 路由枚举与分发结果模型
+├── investigation/              # Agentic Investigation Harness
+│   ├── harness.py              # 逐轮重规划动态排查引擎
+│   ├── llm_planner.py          # 结构化 LLM 调查规划器 (带自纠错)
+│   ├── planner_validator.py    # Schema、只读权限与预算校验器
+│   ├── tool_registry.py        # 统一只读工具注册表与权限白名单
+│   ├── hypotheses.py           # 竞争假设推演与生命周期状态机
+│   ├── evaluator.py            # 证据事实化提取与可观测性盲区标注
+│   ├── state.py                # 动态排查状态机与预算跟踪
+│   ├── stop_conditions.py      # 状态驱动确定性停止判定
+│   ├── trace.py                # 完整排查轨迹与因果证据溯源
+│   └── physical_escalation.py  # 真实物理升级判定与 Guardrail
 ├── evaluation/                 # Evaluation Harness
-│   ├── runner.py               # 评测调度执行器
+│   ├── runner.py               # 生产同构基准评测运行器 (走 RuntimeDispatcher)
 │   ├── dataset.py              # 评测集加载与格式校验
 │   ├── scoring.py              # 5 维加权综合评分
 │   ├── reporter.py             # 详细评测报告生成器
