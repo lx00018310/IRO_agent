@@ -116,6 +116,7 @@ class ProjectOverview(BaseModel):
     important_directories: List[str] = Field(default_factory=list)
     startup_scripts: List[str] = Field(default_factory=list)
     deployment_scripts: List[str] = Field(default_factory=list)
+    known_unknowns: List[str] = Field(default_factory=list)
 
 
 class ConfigItem(BaseModel):

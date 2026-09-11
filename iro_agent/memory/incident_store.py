@@ -6,6 +6,14 @@ from typing import List, Dict, Any, Optional
 from iro_agent.config import get_config
 
 
+# 故障记忆验证状态常量 (Phase 13 Memory 写入与防污染规则)
+STATUS_OBSERVED = "OBSERVED"
+STATUS_AGENT_DIAGNOSIS = "AGENT_DIAGNOSIS"
+STATUS_HUMAN_CONFIRMED = "HUMAN_CONFIRMED"
+STATUS_REGRESSION_VERIFIED = "REGRESSION_VERIFIED"
+VERIFIED_STATUSES = {STATUS_HUMAN_CONFIRMED, STATUS_REGRESSION_VERIFIED}
+
+
 class IncidentStore:
     """内部故障记忆库：使用本地 SQLite 持久化历史故障与诊断结论，提供相似案例溯源与统计"""
 
@@ -180,7 +188,7 @@ class IncidentStore:
             conn.close()
 
     def find_similar_incidents(self, keyword: str, limit: int = 10) -> List[Dict[str, Any]]:
-        """基于故障现象或问题关键字匹配历史事件"""
+        """基于故障现象或问题关键字匹配历史事件，经人工/回归验证的案例拥有高置信权重"""
         conn = self._get_connection()
         try:
             conn.row_factory = sqlite3.Row
@@ -191,9 +199,36 @@ class IncidentStore:
                 WHERE symptom LIKE ? OR user_question LIKE ? OR root_cause LIKE ? OR fault_domain LIKE ?
                 ORDER BY created_at DESC
                 LIMIT ?
-            """, (kw_pattern, kw_pattern, kw_pattern, kw_pattern, limit))
+            """, (kw_pattern, kw_pattern, kw_pattern, kw_pattern, limit * 2))
             rows = cursor.fetchall()
-            return [dict(r) for r in rows]
+            results = []
+            for r in rows:
+                item = dict(r)
+                st = item.get("status", "").upper()
+                is_verified = st in VERIFIED_STATUSES
+                item["is_verified"] = is_verified
+                item["evidence_weight"] = 1.0 if is_verified else 0.25
+                results.append(item)
+
+            # 优先已验证案例，其次按时间
+            results.sort(key=lambda x: (1 if x["is_verified"] else 0, x.get("created_at", "")), reverse=True)
+            return results[:limit]
+        finally:
+            conn.close()
+
+    def get_verified_incidents(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """获取已通过 HUMAN_CONFIRMED 或 REGRESSION_VERIFIED 核验的标杆经验案例"""
+        conn = self._get_connection()
+        try:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM incidents
+                WHERE UPPER(status) IN ('HUMAN_CONFIRMED', 'REGRESSION_VERIFIED')
+                ORDER BY updated_at DESC
+                LIMIT ?
+            """, (limit,))
+            return [dict(r) for r in cursor.fetchall()]
         finally:
             conn.close()
 

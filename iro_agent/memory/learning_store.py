@@ -176,7 +176,17 @@ class LearningMemoryStore:
                 scored_rules.append((score, r))
 
         scored_rules.sort(key=lambda x: (x[0], x[1]["use_count"]), reverse=True)
-        top_rules = [item[1] for item in scored_rules[:limit]]
+        top_rules = []
+        for item in scored_rules[:limit]:
+            r_dict = dict(item[1])
+            # Phase 14 防污染元数据: 历史经验 ≠ 当前事实，仅可用于设置先验优先级，不可充当直接根因证据
+            r_dict["source"] = r_dict.get("source_type") or "learning_memory"
+            r_dict["confidence"] = r_dict.get("confidence") or "STRONGLY_SUPPORTED"
+            r_dict["verified_at"] = r_dict.get("updated_at") or r_dict.get("created_at")
+            r_dict["verification_type"] = r_dict.get("source_type") or "user_correction"
+            r_dict["is_current_fact"] = False
+            r_dict["guidance_role"] = "prior_bias_only"
+            top_rules.append(r_dict)
 
         # 标记本次使用计数
         if top_rules:

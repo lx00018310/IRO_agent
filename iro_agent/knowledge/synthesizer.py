@@ -35,6 +35,8 @@ class KnowledgeSynthesizer:
         self.config = get_config()
         self.glm_cfg = glm_cfg or self.config.glm
         self.glm_call_count = 0
+        self.stage_errors: List[Dict[str, Any]] = []
+        self.failed_reads: List[Dict[str, Any]] = []
 
     def synthesize(
         self,
@@ -49,6 +51,8 @@ class KnowledgeSynthesizer:
         configs = config_items or []
         cfg_rules = config_rules or []
         self.glm_call_count = 0
+        self.stage_errors = []
+        self.failed_reads = []
         t0 = time.time()
 
         has_llm = bool(
@@ -143,6 +147,10 @@ class KnowledgeSynthesizer:
             all_unknowns.update(f.unknown_steps)
         if critic_report and "unknown_areas" in critic_report:
             all_unknowns.update(critic_report["unknown_areas"])
+        for err in self.stage_errors:
+            all_unknowns.add(f"STAGE_FAILURE: {err.get('stage')} - {err.get('error')}")
+
+        overview.known_unknowns = sorted(list(all_unknowns))
 
         cost_time = time.time() - t0
         stats = {
@@ -152,6 +160,8 @@ class KnowledgeSynthesizer:
             "module_coverage": deep_read_res.module_coverage,
             "elapsed_seconds": round(cost_time, 2),
             "critic_pass_completed": bool(critic_report),
+            "stage_errors": self.stage_errors,
+            "failed_reads": self.failed_reads,
         }
 
         return ProjectBlueprint(
@@ -245,10 +255,14 @@ class KnowledgeSynthesizer:
                     for m in modules:
                         if m.name in res["module_responsibilities"]:
                             m.business_role = res["module_responsibilities"][m.name]
-                            m.confidence = "CONFIRMED"
+                            m.confidence = "STRONGLY_SUPPORTED"
                             m.sources.append("glm_architecture_learning")
-            except Exception:
-                pass
+            except Exception as exc:
+                self.stage_errors.append({
+                    "stage": "stage_1_architecture_learning",
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                })
 
         return overview, modules, deep_read_targets
 
@@ -310,10 +324,15 @@ class KnowledgeSynthesizer:
                     mod.state_transitions = res.get("state_transitions", [])
                     mod.external_dependencies = res.get("external_dependencies", [])
                     mod.known_unknowns = res.get("known_unknowns", [])
-                    mod.confidence = res.get("confidence", "STRONGLY_SUPPORTED")
+                    c_val = res.get("confidence", "STRONGLY_SUPPORTED")
+                    mod.confidence = "STRONGLY_SUPPORTED" if c_val == "CONFIRMED" else c_val
                     mod.sources.append("glm_module_deep_reading")
-            except Exception:
-                pass
+            except Exception as exc:
+                self.stage_errors.append({
+                    "stage": f"stage_2_module_deep_learning_{mod.name}",
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                })
 
         return modules
 
@@ -351,9 +370,13 @@ class KnowledgeSynthesizer:
                         c.unit = item.get("unit", c.unit)
                         c.runtime_scope = item.get("runtime_scope", c.runtime_scope)
                         c.priority = item.get("priority", c.priority)
-                        c.confidence = "CONFIRMED"
-        except Exception:
-            pass
+                        c.confidence = "STRONGLY_SUPPORTED"
+        except Exception as exc:
+            self.stage_errors.append({
+                "stage": "stage_3_config_learning",
+                "error": str(exc),
+                "error_type": type(exc).__name__,
+            })
 
         return configs
 
@@ -460,10 +483,15 @@ class KnowledgeSynthesizer:
                                 t.table_type = gt["table_type"]
                             t.business_role = gt.get("business_role", t.business_role)
                             t.not_for = gt.get("not_for", t.not_for)
-                            t.confidence = gt.get("confidence", "CONFIRMED")
+                            c_val = gt.get("confidence", "STRONGLY_SUPPORTED")
+                            t.confidence = "STRONGLY_SUPPORTED" if c_val == "CONFIRMED" else c_val
                             t.sources.append("glm_db_semantics")
-            except Exception:
-                pass
+            except Exception as exc:
+                self.stage_errors.append({
+                    "stage": "stage_4_database_state_learning",
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                })
 
         return tables
 
@@ -532,13 +560,17 @@ class KnowledgeSynthesizer:
                                 source_of_truth=bf.get("source_of_truth", ""),
                                 unknown_steps=bf.get("unknown_steps", []),
                                 evidence="GLM端到端全链路提纯合成",
-                                confidence=bf.get("confidence", "CONFIRMED"),
+                                confidence="STRONGLY_SUPPORTED" if bf.get("confidence") == "CONFIRMED" else bf.get("confidence", "STRONGLY_SUPPORTED"),
                             )
                         )
                     if new_flows:
                         flows = new_flows
-            except Exception:
-                pass
+            except Exception as exc:
+                self.stage_errors.append({
+                    "stage": "stage_5_business_flow_learning",
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                })
 
         return flows
 
@@ -600,13 +632,17 @@ class KnowledgeSynthesizer:
                                 config_source=es.get("config_source", ""),
                                 related_logs=es.get("related_logs", []),
                                 related_apis=es.get("related_apis", []),
-                                confidence=es.get("confidence", "CONFIRMED"),
+                                confidence="STRONGLY_SUPPORTED" if es.get("confidence") == "CONFIRMED" else es.get("confidence", "STRONGLY_SUPPORTED"),
                             )
                         )
                     if new_sys:
                         systems = new_sys
-            except Exception:
-                pass
+            except Exception as exc:
+                self.stage_errors.append({
+                    "stage": "stage_6_external_system_learning",
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                })
 
         return systems
 
@@ -648,8 +684,12 @@ class KnowledgeSynthesizer:
             self.glm_call_count += 1
             if isinstance(res, dict) and "confirmed_facts" in res:
                 return res
-        except Exception:
-            pass
+        except Exception as exc:
+            self.stage_errors.append({
+                "stage": "stage_7_critic_pass",
+                "error": str(exc),
+                "error_type": type(exc).__name__,
+            })
 
         return {
             "confirmed_facts": ["工程模块基础架构与启动脚本已确认"],
