@@ -66,18 +66,97 @@
 
 ---
 
-## 快速上手与 CLI 命令
+## 快速上手与部署指引
 
-### 1. 环境准备
+### 1. 安装与依赖
+
+根据现场工控机环境选择以下方式之一：
+
+#### 方式 A：原生 Python（适用于已安装标准 Python 的环境）
+
 ```bash
-# 安装依赖 (推荐 Python 3.10+)
-pip install -e .
+# 1. 创建虚拟环境 (推荐 Python 3.10+)
+python -m venv .venv
 
-# 复制配置文件
+# 2. 激活虚拟环境
+# Git Bash:
+source .venv/Scripts/activate
+# Windows PowerShell:
+.venv\Scripts\Activate.ps1
+# Windows CMD:
+.venv\Scripts\activate.bat
+
+# 3. 安装项目依赖
+pip install -e .
+```
+
+#### 方式 B：单文件 `uv.exe`（推荐现场嵌入式精简 Python / 离线环境）
+
+> 工业现场若使用 `embed-amd64` 精简版 Python（默认缺失 `venv` 和 `pip` 模块），直接使用单文件免安装的 `uv.exe` 可规避 Python 环境缺失问题。
+
+- **联网工控机一键安装**：
+  ```bash
+  # 下载并加入当前会话 PATH
+  powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+  export PATH="$HOME/.local/bin:$PATH"
+
+  # 创建虚拟环境并安装依赖
+  uv venv .venv
+  source .venv/Scripts/activate
+  uv pip install -e .
+  ```
+
+- **离线内网工控机（直接拷贝单文件）**：
+  将外网下载的单个 [`uv.exe`](https://github.com/astral-sh/uv/releases) 复制到项目根目录下，直接执行：
+  ```bash
+  ./uv.exe venv .venv
+  source .venv/Scripts/activate
+  ./uv.exe pip install -e .
+  ```
+
+#### 动态网页探针内核安装 (用于 WES / 调度动态页面抓取)
+
+若现场需要通过 `web_fetch` 抓取并排查调度系统网页（如 DevExpress Blazor Server、Vue、React、ASP.NET WebForms 等动态异步页面），Playwright 依赖独立的 Chromium 运行环境，需执行官方下载指令：
+
+```bash
+# 下载并安装 Chromium 浏览器内核
+playwright install chromium
+```
+
+> [!TIP]
+> **内网/弱网加速下载**：若现场工控机访问海外源较慢，可在下载前指定国内镜像源：
+> ```powershell
+> # Windows PowerShell 环境：
+> $env:PLAYWRIGHT_DOWNLOAD_HOST="https://npmmirror.com/mirrors/playwright/"
+> playwright install chromium
+> ```
+
+### 2. 配置文件说明
+
+复制 `config.example.json` 为 `config.json`，配置项目路径与相关服务参数：
+```bash
 cp config.example.json config.json
 ```
 
-### 2. 运行工业评测集 (Evaluation)
+### 3. 项目认知初始化 (Project Learning)
+```bash
+# 执行深度项目认知自举
+python -m iro_agent.cli init --deep
+
+# 纯静态模式 (无需外部 LLM API)
+python -m iro_agent.cli init --deep --static-only
+```
+
+### 4. 交互式诊断与网关服务
+```bash
+# 交互式排查会话
+python -m iro_agent.cli chat
+
+# 启动企业协同网关 (如飞书长连接网关)
+python -m iro_agent.cli gateway start
+```
+
+### 5. 运行工业评测集 (Evaluation)
 ```bash
 # 运行开发评测集
 python -m iro_agent.cli eval dev
@@ -90,25 +169,22 @@ python -m iro_agent.cli eval external --dataset-dir /path/to/blind_cases
 ```
 评测报告与轨迹回放将自动生成至 `.eval_runs/<run_id>/report.md`。
 
-### 3. 运行全量单元测试
+### 6. 运行全量自动化测试
 ```bash
 pytest -q
 ```
 当前工程包含 138 项针对状态机、证据规划、停止条件、覆盖度学习及评测 Grader 的自动化测试，保持 100% 通过。
 
-### 4. 项目认知初始化 (Project Learning)
-```bash
-# 执行深度项目认知自举
-python -m iro_agent.cli init --deep
+### 7. 工控机版本更新与快捷启动
 
-# 纯静态模式 (无需外部 LLM API)
-python -m iro_agent.cli init --deep --static-only
-```
+- **工控机拉取更新（推荐命令）**：
+  工控机作为生产运行端，为避免历史分叉或文件冲突导致 `git pull` 中断，推荐每次更新时执行以下命令强制对齐远程仓库（本地受 `.gitignore` 保护的 `config.json` 与 `.venv` 不会被覆盖）：
+  ```bash
+  git fetch origin main && git reset --hard origin/main
+  ```
 
-### 5. 交互式诊断会话 (Interactive Chat)
-```bash
-python -m iro_agent.cli chat
-```
+- **Windows 一键交互菜单 (`start_iro_agent.bat`)**：
+  在 Windows 下可直接双击运行根目录的 `start_iro_agent.bat`，脚本已将自检、认知自举与日常排查整合为交互式菜单，防止现场误操作。
 
 ---
 
