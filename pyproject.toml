@@ -13,6 +13,7 @@ dependencies = [
     "requests>=2.30.0",
     "psycopg2-binary>=2.9.0",
     "lark-oapi>=1.7.0",
+    "playwright>=1.40.0",
 ]
 
 [project.scripts]
