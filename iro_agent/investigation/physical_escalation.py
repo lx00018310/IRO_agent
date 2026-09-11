@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Tuple, Any
 from iro_agent.investigation.models import CaseType
 
 
@@ -28,3 +28,36 @@ class PhysicalEscalation:
             checklist.append("3. 【人工操作排查】：确认是否有操作人员在现场控制柜进行了手动急停或离线模式切换。")
 
         return checklist
+
+    @classmethod
+    def should_escalate(cls, state: Any, hypo_mgr: Any) -> Tuple[bool, str]:
+        """
+        严格评估是否可以升级至现场物理排查：
+        严禁自动将‘数字证据未找到’或‘工具执行超时/失败’推断为‘高度怀疑物理故障’！
+        仅当数字证据已充分覆盖且所有数字指标均处于健康状态时，才允许升级。
+        """
+        # 1. 如果存在工具失败或错误，属于观测断链 (Observability Gap)，不得归咎于物理层
+        if getattr(state, "has_tool_failure", lambda: False)():
+            return False, "关键排查工具出现异常或超时，属于观测断链 (Observability Gap)，无法确认物理故障"
+
+        # 2. 如果数字排查步数过少，不能草率结案为物理故障
+        executed_steps = getattr(state, "executed_steps", [])
+        if len(executed_steps) < 2:
+            return False, "数字要素排查尚不充分，未覆盖核心日志与业务状态机"
+
+        # 3. 如果已有某个数字假设获得了明确支持，无需升级
+        if getattr(hypo_mgr, "has_confirmed_hypothesis", lambda: False)():
+            return False, "已存在确凿的数字/软件事实根因，无需升级物理排查"
+
+        if getattr(hypo_mgr, "has_strongly_supported_hypothesis", lambda: False)():
+            return False, "软件业务链路或接口已获得强证据支持锁定，无需升级物理排查"
+
+        # 4. 检查是否至少覆盖了日志和核心状态
+        evidence_types = [s.evidence_type for s in executed_steps if hasattr(s, "evidence_type")]
+        has_log = any("log" in et.lower() for et in evidence_types)
+        has_state_or_ver = any("task" in et.lower() or "status" in et.lower() or "version" in et.lower() or "cfg" in et.lower() for et in evidence_types)
+        if not (has_log and has_state_or_ver):
+            return False, "核心运行日志与业务状态机未完整取证"
+
+        return True, "关键数字证据均已完整覆盖且无异常，建议升级现场物理带外排查"
+

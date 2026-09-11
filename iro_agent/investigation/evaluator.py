@@ -1,8 +1,9 @@
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from iro_agent.investigation.models import (
     InvestigationStep,
     EvidenceEvaluationResult,
     HypothesisStatus,
+    EvidenceRecord,
 )
 from iro_agent.investigation.hypotheses import HypothesisManager
 
@@ -97,3 +98,45 @@ class EvidenceEvaluator:
             detail=detail,
             impacted_hypotheses=impacted,
         )
+
+    @classmethod
+    def create_evidence_record(
+        cls,
+        step: InvestigationStep,
+        tool_output: Any,
+        eval_res: EvidenceEvaluationResult,
+    ) -> EvidenceRecord:
+        """根据排查步骤执行与评估结果标准化生成客观 EvidenceRecord"""
+        is_error = False
+        error_type = None
+        if isinstance(tool_output, dict) and tool_output.get("error"):
+            is_error = True
+            error_type = "tool_failure"
+
+        supports: List[str] = []
+        contradicts: List[str] = []
+        for h_id, status in eval_res.impacted_hypotheses.items():
+            if status in (HypothesisStatus.CONFIRMED.value, HypothesisStatus.STRONGLY_SUPPORTED.value):
+                supports.append(h_id)
+            elif status == HypothesisStatus.RULED_OUT.value:
+                contradicts.append(h_id)
+
+        reliability = 0.0 if is_error else (0.95 if eval_res.verdict == "FACT" else 0.7)
+        relevance = 0.9 if eval_res.impacted_hypotheses else 0.6
+
+        return EvidenceRecord(
+            evidence_id=f"EV_{step.step_id}",
+            source_type=step.tool,
+            source_name=step.evidence_type,
+            tier=step.evidence_tier,
+            query=step.tool_args,
+            raw_summary=eval_res.detail,
+            reliability=reliability,
+            relevance=relevance,
+            supports=supports,
+            contradicts=contradicts,
+            is_error=is_error,
+            error_type=error_type,
+            provenance={"tool": step.tool, "step_id": step.step_id, "verdict": eval_res.verdict},
+        )
+
