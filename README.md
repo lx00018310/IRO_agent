@@ -3,7 +3,7 @@
 > **IRO_agent is an evidence-driven industrial diagnosis harness.**  
 > It learns a project's operational model, investigates incidents through iterative evidence gathering, and evaluates its own diagnosis quality through reproducible datasets.
 
-[![Tests](https://img.shields.io/badge/tests-167%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-210%20passed-brightgreen.svg)]()
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)]()
 [![Security](https://img.shields.io/badge/boundary-Strict%20Read--Only-red.svg)]()
 
@@ -175,7 +175,7 @@ python -m iro_agent.cli eval external --dataset-dir /path/to/blind_cases
 ```bash
 pytest -q
 ```
-当前工程包含 167 项针对状态机、动态重规划、假设生命周期、安全校验与端到端同构分发的自动化测试，保持 100% 通过。
+当前工程包含 210 项针对状态机、动态重规划、假设生命周期、安全校验与端到端同构分发的自动化测试 + DEV/REGRESSION 评测闭环，保持 100% 通过。
 
 ### 7. 工控机版本更新与快捷启动
 
