@@ -1,4 +1,5 @@
 import re
+import json
 from typing import Dict, Any, Optional, Callable, List, Tuple
 from pydantic import BaseModel, Field
 from iro_agent.investigation.models import EvidenceTier
@@ -27,6 +28,7 @@ class ToolRegistry:
 
     def __init__(self, register_defaults: bool = True, include_legacy_pipelines: bool = False):
         self._tools: Dict[str, ToolSpec] = {}
+        self.source_context = None
         if register_defaults:
             self._register_default_tools(include_legacy_pipelines=include_legacy_pipelines)
 
@@ -65,6 +67,8 @@ class ToolRegistry:
 
         spec = self._tools[tool_name]
         args = arguments or {}
+        if "source_id" in args and (not isinstance(args["source_id"], str) or not args["source_id"]):
+            return False, "source_id 必须为非空字符串；查询全部来源时请省略此参数"
 
         # 1. 针对 db_query 的安全防线：强制只能 SELECT
         if tool_name == "db_query":
@@ -114,8 +118,8 @@ class ToolRegistry:
 
         # 8. 针对 web_fetch 的参数校验
         if tool_name == "web_fetch":
-            if not any(k in args for k in ("url", "uri")):
-                return False, "web_fetch 必须提供 'url' 参数"
+            if any(k in args and not isinstance(args[k], str) for k in ("url", "source_id")):
+                return False, "web_fetch 的 url/source_id 必须为字符串"
 
         return True, None
 
@@ -127,26 +131,34 @@ class ToolRegistry:
             if spec.parameters_schema:
                 param_strs = [f"{p}: {t}" for p, t in spec.parameters_schema.items()]
                 lines.append(f"  参数: {{{', '.join(param_strs)}}}")
+        if self.source_context is not None:
+            lines.append("当前单一项目的数据来源（省略 source_id 时分别读取该类全部来源，结果保留来源；失败来源是观测缺口）：")
+            lines.append(json.dumps(self.source_context, ensure_ascii=False))
         return "\n".join(lines)
 
     def _register_default_tools(self, include_legacy_pipelines: bool = False) -> None:
         """注册工业现场标准只读安全工具"""
         self.register(ToolSpec(
+            name="sources_list",
+            description="列出当前唯一项目的已登记来源 ID、类型、用途和位置；不含凭据",
+            tier=EvidenceTier.TIER_1B_STATIC_FACTS,
+        ))
+        self.register(ToolSpec(
             name="log_search",
             description="检索应用服务和系统运行日志，支持按关键词、异常码、时间范围过滤",
-            parameters_schema={"keyword": "str, 必填", "limit": "int, 选填, 默认20"},
+            parameters_schema={"keyword": "str, 必填", "limit": "int, 选填, 每个来源默认20", "source_id": "str, 选填，精确选择日志来源"},
             tier=EvidenceTier.TIER_1A_RUNTIME_DIGITAL,
         ))
         self.register(ToolSpec(
             name="db_query",
-            description="只读查询业务核心数据库 (MySQL/PostgreSQL)，仅允许 SELECT/SHOW",
-            parameters_schema={"sql": "str, 必填, 仅允许只读 SELECT 语句"},
+            description="分别只读查询已登记 PostgreSQL 数据库；结果按来源标识，不支持跨库 JOIN",
+            parameters_schema={"sql": "str, 必填, 仅允许只读 SELECT 语句", "source_id": "str, 选填，精确选择数据库"},
             tier=EvidenceTier.TIER_1A_RUNTIME_DIGITAL,
         ))
         self.register(ToolSpec(
             name="db_describe",
             description="只读查看指定数据库表的表结构、字段类型与主键定义",
-            parameters_schema={"table_name": "str, 必填, 目标数据库表名"},
+            parameters_schema={"table_name": "str, 必填, 目标数据库表名", "source_id": "str, 选填，精确选择数据库"},
             tier=EvidenceTier.TIER_1A_RUNTIME_DIGITAL,
         ))
         self.register(ToolSpec(
@@ -170,7 +182,7 @@ class ToolRegistry:
         self.register(ToolSpec(
             name="code_search",
             description="在本地工程源码中只读检索类名、方法名或关键逻辑",
-            parameters_schema={"query": "str, 必填, 代码或符号关键字"},
+            parameters_schema={"query": "str, 必填, 代码或符号关键字", "source_id": "str, 选填，精确选择代码来源"},
             tier=EvidenceTier.TIER_1B_STATIC_FACTS,
         ))
         self.register(ToolSpec(
@@ -187,8 +199,8 @@ class ToolRegistry:
         ))
         self.register(ToolSpec(
             name="web_fetch",
-            description="只读获取内部微服务或硬件设备 HTTP 只读接口",
-            parameters_schema={"url": "str, 必填, 必须为只读 GET 请求"},
+            description="GET 读取已登记的精确 HTTP 端点；不跟随重定向，不登录或提交表单",
+            parameters_schema={"url": "str, 选填, 必须与登记 URL 完全一致", "source_id": "str, 选填；均省略时读取全部 HTTP 来源"},
             tier=EvidenceTier.TIER_2_SYSTEM_BOUNDARY,
         ))
         if include_legacy_pipelines:

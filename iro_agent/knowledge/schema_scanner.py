@@ -14,6 +14,7 @@ class ColumnMetadata(BaseModel):
 
 
 class TableMetadata(BaseModel):
+    source_id: str = ""
     table_name: str
     table_schema: str = "public"
     columns: List[ColumnMetadata] = Field(default_factory=list)
@@ -23,6 +24,7 @@ class TableMetadata(BaseModel):
 
 
 class SchemaScanResult(BaseModel):
+    source_status: Dict[str, str] = Field(default_factory=dict)
     database_name: str = ""
     tables: List[TableMetadata] = Field(default_factory=list)
     connected: bool = False

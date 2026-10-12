@@ -4,13 +4,11 @@ import json
 import argparse
 from pathlib import Path
 from typing import Optional, Tuple
-from iro_agent.config import get_config, load_config, IROConfig
+from iro_agent.config import get_config, load_config, IROConfig, resolve_config_path
+from iro_agent.setup import SetupWizard, SetupCancelled, SetupRequiredError, require_setup, masked_config, validation_message
+from pydantic import ValidationError
 from iro_agent.security.policy import validate_read_path
 from iro_agent.security.audit import AuditLogger
-from iro_agent.readers.git_reader import GitReader
-from iro_agent.readers.code_reader import CodeReader
-from iro_agent.readers.wrelease_reader import WReleaseReader
-from iro_agent.readers.log_reader import LogReader
 from iro_agent.readers.db_reader import DatabaseReader
 from iro_agent.memory.incident_store import IncidentStore
 from iro_agent.llm.glm_client import GlmClient
@@ -68,12 +66,8 @@ def init_agent_engine(config: IROConfig) -> GlmClient:
     from iro_agent.readers.version_provider import VersionReaderResolver
     version_reader, active_provider = VersionReaderResolver.resolve(config=config, audit_logger=audit)
 
-    git_reader = GitReader(audit_logger=audit)
-    code_reader = CodeReader(audit_logger=audit)
-    wrelease_reader = WReleaseReader(audit_logger=audit)
-    log_reader = LogReader(audit_logger=audit)
-    memory_store = IncidentStore()
-    db_reader = DatabaseReader(db_config=config.database, audit_logger=audit)
+    from iro_agent.readers.sources import SourceReaders
+    source_readers = SourceReaders(config=config, audit_logger=audit)
 
     from iro_agent.analyzer.orchestrator import DiagnosticOrchestrator
     orchestrator = DiagnosticOrchestrator(audit_logger=audit)
@@ -106,8 +100,6 @@ def init_agent_engine(config: IROConfig) -> GlmClient:
         "version_events",
         lambda start_time=None, end_time=None: version_reader.get_version_events(start_time=start_time, end_time=end_time) if version_reader else [],
     )
-    client.register_tool_handler("log_search", lambda **kwargs: log_reader.search_logs(**kwargs))
-    client.register_tool_handler("code_search", lambda query: code_reader.search_code(query))
     from iro_agent.knowledge.lookup import ProjectLookupEngine
     from iro_agent.knowledge.store import ProjectKnowledgeStore
     knowledge_store = ProjectKnowledgeStore(base_dir=Path(config.project_root) if Path(config.project_root).exists() else Path.cwd())
@@ -142,9 +134,6 @@ def init_agent_engine(config: IROConfig) -> GlmClient:
     client.register_tool_handler("learning_recall", lambda query, limit=5: learning_store.recall_rules(query, limit=limit))
     client.register_tool_handler("learning_list", lambda topic=None, status="active": learning_store.list_rules(topic=topic, status=status))
 
-    client.register_tool_handler("db_list_tables", lambda: db_reader.list_tables())
-    client.register_tool_handler("db_describe_table", lambda table_name: db_reader.describe_table(table_name))
-    client.register_tool_handler("db_query", lambda query, max_rows=20: db_reader.execute_query(query, max_rows=max_rows))
     client.register_tool_handler("diagnostic_pipeline", lambda symptom, log_keyword=None, user_message_time=None: orchestrator.run_pipeline(symptom=symptom, log_keyword=log_keyword, user_message_time=user_message_time))
 
     from iro_agent.investigation.harness import InvestigationHarness
@@ -163,9 +152,8 @@ def init_agent_engine(config: IROConfig) -> GlmClient:
 
     client.register_tool_handler("investigation_pipeline", _run_inv)
 
-    from iro_agent.readers.web_reader import WebReader
-    web_reader = WebReader(audit_logger=audit)
-    client.register_tool_handler("web_fetch", lambda **kwargs: web_reader.fetch_page(**kwargs))
+    for name, handler in source_readers.tool_handlers().items():
+        client.register_tool_handler(name, handler)
 
     return client
 
@@ -178,89 +166,36 @@ def cmd_doctor(args):
     print("  IRO_agent 系统与运行环境自检 (Doctor Check)     ")
     print("==================================================")
     config = get_config()
-
-    checks = []
-
-    # 1. 检查 Python 版本
-    py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
-    checks.append(("Python 运行环境", py_ver, sys.version_info >= (3, 10)))
-
-    # 2. 项目根目录
-    root_ok = Path(config.project_root).exists()
-    checks.append(("项目源码根路径", config.project_root, root_ok))
-
-    # 3. WRelease 目录
-    wrel_path = Path(config.wrelease_dir)
-    wrel_ok = wrel_path.exists()
-    wrel_count = len(list(wrel_path.glob("*.wrelease"))) if wrel_ok else 0
-    checks.append(("WRelease 交付目录", f"{config.wrelease_dir} (发现 {wrel_count} 个发布包)", wrel_ok and wrel_count > 0))
-
-    # 4. 日志目录
-    log_ok_count = sum(1 for d in config.log_dirs if Path(d).exists())
-    checks.append(("日志目录有效性", f"{log_ok_count}/{len(config.log_dirs)} 目录存在", log_ok_count > 0))
-
-    # 5. Git 仓库状态
-    git_ok = False
-    git_info = "不可用"
-    try:
-        gr = GitReader()
-        status = gr.get_status()
-        git_ok = True
-        git_info = status.strip()
-    except Exception as e:
-        git_info = f"异常: {e}"
-    checks.append(("Git 只读状态", git_info, git_ok))
-
-    # 6. 版本提供者决议 (二选一)
-    from iro_agent.readers.version_provider import VersionReaderResolver
-    _, active_prov = VersionReaderResolver.resolve(config=config)
-    checks.append(("当前活跃版本源 (二选一)", active_prov, active_prov != "None"))
-
-    # 7. SQLite 数据库
-    audit_ok = False
-    try:
-        al = AuditLogger()
-        audit_ok = True
-    except Exception:
-        pass
-    checks.append(("审计与记忆数据库 (SQLite)", "正常初始化", audit_ok))
-
-    # 8. GLM 模型接口状态
-    glm_ok = bool(config.glm.api_key and config.glm.api_key != "YOUR_GLM_API_KEY")
-    glm_detail = f"已就绪 (模型: {config.glm.model})" if glm_ok else "未配置 API Key (需在 config.json 中填入)"
-    checks.append(("GLM-5.3-Flash 接口", glm_detail, glm_ok))
-
-    for name, detail, passed in checks:
-        status_icon = "[PASS]" if passed else "[WARN/FAIL]"
-        print(f"{status_icon:12} {name:20}: {detail}")
-
-    print("==================================================")
-    all_passed = all(c[2] for c in checks)
-    if all_passed:
-        print("环境校验通过！系统具备只读诊断作业条件。")
-    else:
-        print("注意：部分配置存在未通过项，请先检查并修改 config.json。")
+    print(f"Python: {sys.version.split()[0]}")
+    print(f"项目: {config.project_name or '(未配置)'} | 配置流程: {'已完成' if config.is_setup_complete() else '需要执行 setup'}")
+    glm_ready = bool(config.glm.api_key and config.glm.api_key != "YOUR_GLM_API_KEY")
+    print(f"模型凭据: {'已配置（未探测模型服务）' if glm_ready else '未配置（仍可执行静态认知初始化）'}")
+    if config.sources is None:
+        print("尚未完成本项目配置流程，请先运行 python -m iro_agent.cli setup。")
+        return 2
+    result = cmd_sources(argparse.Namespace(check=True))
+    return result or (0 if config.is_setup_complete() else 2)
 
 
 def cmd_config(args):
     """查看当前生效配置（强制敏感凭证脱敏）"""
-    import copy
     config = get_config()
-    cfg_data = copy.deepcopy(config.model_dump())
-
-    def _mask_sensitive(d: dict):
-        sensitive_keys = {"password", "api_key", "token", "aes_key", "secret", "private_key", "app_secret"}
-        for k, v in d.items():
-            if isinstance(v, dict):
-                _mask_sensitive(v)
-            elif isinstance(v, str) and (k.lower() in sensitive_keys or "secret" in k.lower() or "key" in k.lower()) and v:
-                d[k] = "********"
-
-    _mask_sensitive(cfg_data)
+    cfg_data = masked_config(config.model_dump())
     print("==================================================")
     print("  IRO_agent 当前有效配置 (敏感字段已自动掩码脱敏)   ")
     print("==================================================")
     print(json.dumps(cfg_data, indent=2, ensure_ascii=False))
+
+
+def cmd_sources(args):
+    from iro_agent.readers.sources import SourceReaders
+    readers = SourceReaders()
+    print(json.dumps(readers.inventory(), ensure_ascii=False, indent=2))
+    if args.check:
+        checks = readers.check()
+        print(json.dumps(checks, ensure_ascii=False, indent=2))
+        return 0 if checks and all(c["status"] == "OK" for c in checks) else 1
+    return 0
 
 
 def cmd_chat(args):
@@ -271,10 +206,10 @@ def cmd_chat(args):
         print("==================================================")
         print("  [提示] 尚未配置有效的 GLM API Key！")
         print("  IRO_agent 严格依赖 GLM-5.3-Flash 进行诊断分析与工具调用。")
-        print("  请先用记事本打开并编辑根目录下的 config.json 文件，")
-        print("  在 'glm': { 'api_key': '填入您的智谱API_KEY' } 中配置后重试。")
+        print("  请运行 python -m iro_agent.cli setup 配置模型凭据，")
+        print("  或设置环境变量 IRO_GLM_API_KEY 后重试。")
         print("==================================================")
-        return
+        return 2
 
     engine = init_agent_engine(config)
 
@@ -397,13 +332,19 @@ def run_gateway_doctor(config: IROConfig):
     checks.append((f"Version provider: {active_provider}", "激活成功" if v_ok else "无可用版本源", v_ok))
 
     # 6. LogReader path
-    log_paths_ok = any(os.path.exists(d) for d in config.log_dirs)
+    log_dirs = [s.path for s in config.sources.logs] if config.sources is not None else config.log_dirs
+    log_paths_ok = any(os.path.exists(d) for d in log_dirs)
     checks.append(("LogReader path readable", "日志目录可读" if log_paths_ok else "未发现有效日志目录", log_paths_ok))
 
     # 7. Database read-only connection
-    db_reader = DatabaseReader(db_config=config.database, audit_logger=audit)
-    db_ok = db_reader.test_connection()
-    checks.append(("Database read-only connection", "连接成功 (只读)" if db_ok else "不可达或未启动", db_ok))
+    if config.sources is not None:
+        from iro_agent.readers.sources import SourceReaders
+        for check in SourceReaders(config, audit).check():
+            checks.append((f"Source {check['source_id']}", check.get("error", "只读检查成功"), check["status"] == "OK"))
+    else:
+        db_reader = DatabaseReader(db_config=config.database, audit_logger=audit)
+        db_ok = db_reader.test_connection()
+        checks.append(("Database read-only connection", "连接成功 (只读)" if db_ok else "不可达或未启动", db_ok))
 
     # 8. Incident database writable
     mem_ok = os.path.exists(config.storage.memory_db_path)
@@ -440,16 +381,19 @@ def cmd_gateway(args):
 
     if action == "start":
         if not config.glm.api_key or config.glm.api_key == "YOUR_GLM_API_KEY":
-            print("[错误] 未配置有效的 GLM API Key，无法启动网关服务。请先编辑 config.json 填入 api_key。")
-            return
+            print("[错误] 未配置有效的 GLM API Key，无法启动网关服务。请执行 setup 或设置 IRO_GLM_API_KEY。")
+            return 2
 
         engine = init_agent_engine(config)
 
         if gw_type == "feishu":
+            if not config.feishu.enabled:
+                print("[错误] 本项目未启用飞书网关，请先执行 setup 配置。")
+                return 2
             if not config.feishu.app_id or not config.feishu.app_secret:
                 print("[错误] 未配置 FEISHU_APP_ID 或 FEISHU_APP_SECRET，无法启动飞书长连接网关。")
                 print("请在 config.json 中配置 feishu.app_id 和 feishu.app_secret，或设置环境变量。")
-                return
+                return 2
             gateway = FeishuGateway(config=config, glm_client=engine)
             gateway.start(block=True)
         elif gw_type == "http":
@@ -480,8 +424,8 @@ def cmd_gateway(args):
 def cmd_init(args):
     """初始化或刷新目标工业系统的项目业务蓝图"""
     config = get_config()
-    if getattr(args, "project", None):
-        config.project_name = args.project
+    if getattr(args, "project", None) and args.project != config.project_name:
+        raise ValueError("一个实例只管理一个项目；修改项目必须重新执行 setup，不能通过 init --project 切换")
     from iro_agent.knowledge.bootstrap import ProjectKnowledgeBootstrapper
     bootstrapper = ProjectKnowledgeBootstrapper(config)
     bootstrapper.run_bootstrap(
@@ -516,10 +460,15 @@ def cmd_eval(args):
     print("==================================================")
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description="IRO_agent - 工业软件只读智能诊断助手")
-    parser.add_argument("--config", "-c", help="指定配置文件路径 (默认查找 config.json / config.example.json)")
+    parser.add_argument("--config", "-c", help="指定配置文件路径 (默认当前目录 config.json，或 IRO_CONFIG_PATH)")
     subparsers = parser.add_subparsers(dest="command")
+
+    setup_parser = subparsers.add_parser("setup", help="强制项目配置流程：分步添加/删除同项目的多个数据来源")
+    setup_parser.add_argument("--check", action="store_true", help="仅检查配置流程是否完成，不启动向导")
+    sources_parser = subparsers.add_parser("sources", help="查看当前项目的数据来源")
+    sources_parser.add_argument("--check", action="store_true", help="执行只读连通性检查 (SELECT 1 / GET)")
 
     # init
     init_parser = subparsers.add_parser("init", help="初始化或刷新目标工程的业务认知蓝图 (Project Knowledge Bootstrap)")
@@ -566,28 +515,41 @@ def main():
     ext_p.add_argument("--repeat", type=int, default=1, help="用例重复运行轮次")
     ext_p.add_argument("--verbose", "-v", action="store_true", help="打印详细排查过程")
 
-    args = parser.parse_args()
-
-    if args.config:
-        load_config(args.config)
-
-    if args.command == "init":
-        cmd_init(args)
-    elif args.command == "doctor":
-        cmd_doctor(args)
-    elif args.command == "config":
-        cmd_config(args)
-    elif args.command == "chat":
-        cmd_chat(args)
-    elif args.command == "investigate":
-        cmd_investigate(args)
-    elif args.command == "gateway":
-        cmd_gateway(args)
-    elif args.command == "eval":
-        cmd_eval(args)
-    else:
+    args = parser.parse_args(argv)
+    if not args.command:
         parser.print_help()
+        return 0
+    try:
+        if args.command == "setup" and not args.check:
+            SetupWizard(resolve_config_path(args.config)).run()
+            return 0
+        config = load_config(args.config)
+        if args.command in {"init", "chat", "investigate", "eval"} or (args.command == "gateway" and args.action == "start"):
+            require_setup(config)
+        if args.command == "setup":
+            require_setup(config)
+            print("本项目配置流程已完成。")
+            return 0
+        handlers = {"init": cmd_init, "doctor": cmd_doctor, "config": cmd_config,
+                    "chat": cmd_chat, "investigate": cmd_investigate, "gateway": cmd_gateway,
+                    "eval": cmd_eval, "sources": cmd_sources}
+        return handlers[args.command](args) or 0
+    except (SetupCancelled, KeyboardInterrupt, EOFError):
+        print("\n配置/操作已取消；未完成的向导不会覆盖原配置。")
+        return 2
+    except ValidationError as exc:
+        print("[配置错误] " + validation_message(exc))
+        return 2
+    except SetupRequiredError as exc:
+        print("[配置未完成] " + str(exc))
+        if args.config:
+            print(f'请使用同一配置文件：python -m iro_agent.cli --config "{resolve_config_path(args.config).as_posix()}" setup')
+        return 2
+    except (ValueError, OSError) as exc:
+        from iro_agent.security.redactor import redact_secrets
+        print("[错误] " + redact_secrets(str(exc)))
+        return 2
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

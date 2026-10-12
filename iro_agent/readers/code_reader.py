@@ -1,23 +1,28 @@
 import os
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-from iro_agent.config import get_config
-from iro_agent.security.policy import validate_read_path
+from iro_agent.config import get_config, IROConfig
+from iro_agent.security.policy import validate_read_path, SecurityPolicyError
 from iro_agent.security.audit import AuditLogger
 
 
 class CodeReader:
     """严格只读代码检索与查看工具"""
 
-    def __init__(self, root_dir: Optional[str | Path] = None, audit_logger: Optional[AuditLogger] = None):
-        self.config = get_config()
-        raw_root = root_dir or self.config.project_root
+    def __init__(self, root_dir: Optional[str | Path] = None, audit_logger: Optional[AuditLogger] = None,
+                 config: Optional[IROConfig] = None):
+        self.config = config or get_config()
+        raw_root = root_dir or self.config.primary_code_root
+        if not raw_root:
+            raise ValueError("未配置代码来源")
         self.root_dir = validate_read_path(raw_root, self.config)
         self.audit = audit_logger or AuditLogger()
 
     def read_file(self, relative_path: str, start_line: int = 1, line_count: int = 200) -> str:
         """安全读取指定代码文件的片段（带行号）"""
         target_path = validate_read_path(self.root_dir / relative_path, self.config)
+        if not target_path.is_relative_to(self.root_dir):
+            raise SecurityPolicyError("代码文件不能越出所选来源目录")
         if not target_path.is_file():
             raise FileNotFoundError(f"文件不存在: {target_path}")
 
@@ -81,6 +86,9 @@ class CodeReader:
                     continue
                 file_path = Path(root) / file
                 try:
+                    resolved = validate_read_path(file_path, self.config)
+                    if not resolved.is_relative_to(self.root_dir):
+                        continue
                     with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                         for line_no, line in enumerate(f, start=1):
                             if query.lower() in line.lower():

@@ -31,8 +31,10 @@ class TargetedModuleDeepReader:
         max_files_per_module: int = 8,
         max_lines_per_file: int = 300,
         max_total_deep_read_lines: int = 3000,
+        allowed_roots: Optional[List[Path]] = None,
     ):
         self.project_root = Path(project_root)
+        self.allowed_roots = [p.resolve() for p in (allowed_roots if allowed_roots is not None else [self.project_root])]
         self.max_modules = max_modules
         self.max_files_per_module = max_files_per_module
         self.max_lines_per_file = max_lines_per_file
@@ -58,13 +60,20 @@ class TargetedModuleDeepReader:
             if not f_path:
                 continue
             # 排除测试、生成代码、DTO、静态文件
-            f_lower = f_path.lower()
+            candidate_path = Path(f_path)
+            local_path = candidate_path
+            if candidate_path.is_absolute():
+                for root in self.allowed_roots:
+                    if candidate_path.is_relative_to(root):
+                        local_path = candidate_path.relative_to(root)
+                        break
+            f_lower = local_path.as_posix().lower()
             if any(p in f_lower for p in ["test", "dto", "vo", "generated", "target", "build", "node_modules"]):
                 continue
 
             matched_mod = None
             for m in active_modules:
-                if m.lower() in f_path.lower():
+                if m.lower() in f_path.lower() or m == ent.get("source_id"):
                     matched_mod = m
                     break
             if not matched_mod and active_modules:
@@ -93,7 +102,9 @@ class TargetedModuleDeepReader:
                     continue
                 seen_files.add(rel_path)
 
-                full_path = self.project_root / rel_path
+                full_path = (self.project_root / rel_path).resolve()
+                if not any(full_path.is_relative_to(root) for root in self.allowed_roots):
+                    continue
                 if not full_path.exists() or not full_path.is_file():
                     continue
 

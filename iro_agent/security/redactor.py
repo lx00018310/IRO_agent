@@ -31,6 +31,11 @@ def redact_secrets(text: str) -> str:
             cfg.feishu.app_secret,
             cfg.database.password,
         ]
+        if cfg.sources is not None:
+            import os
+            secrets_to_mask.extend(s.password for s in cfg.sources.databases)
+            secrets_to_mask.extend(os.environ.get(s.password_env, "") for s in cfg.sources.databases if s.password_env)
+            secrets_to_mask.extend(os.environ.get(env, "") for s in cfg.sources.http for env in s.headers_env.values())
         for s in secrets_to_mask:
             if s and len(s) >= 6 and s not in ("YOUR_GLM_API_KEY", "YOUR_FEISHU_APP_SECRET"):
                 result = result.replace(s, "[REDACTED_SECRET]")

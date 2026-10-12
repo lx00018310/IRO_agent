@@ -24,15 +24,15 @@ from iro_agent.knowledge.schema_scanner import SchemaScanResult
 from iro_agent.knowledge.code_scanner import CodeScanResult
 from iro_agent.knowledge.business_flows import BusinessFlowLearner
 from iro_agent.knowledge.deep_reader import TargetedModuleDeepReader, DeepReadResult
-from iro_agent.config import get_config, GlmConfig
+from iro_agent.config import get_config, GlmConfig, IROConfig
 from iro_agent.llm.glm_client import GlmClient
 
 
 class KnowledgeSynthesizer:
     """通用工业项目深度认知提炼器：真 GLM 多轮结构化提炼与批判合成器 (Deep Synthesis Pipeline)"""
 
-    def __init__(self, glm_cfg: Optional[GlmConfig] = None):
-        self.config = get_config()
+    def __init__(self, glm_cfg: Optional[GlmConfig] = None, config: Optional[IROConfig] = None):
+        self.config = config or get_config()
         self.glm_cfg = glm_cfg or self.config.glm
         self.glm_call_count = 0
         self.stage_errors: List[Dict[str, Any]] = []
@@ -64,7 +64,8 @@ class KnowledgeSynthesizer:
         overview, modules, deep_read_targets = self._stage_1_architecture_learning(tree_res, code_res, client)
 
         # Stage 2: 核心源码深读与模块深层学习 (Module Deep Learning)
-        deep_reader = TargetedModuleDeepReader(project_root=Path(tree_res.project_root))
+        deep_reader = TargetedModuleDeepReader(project_root=Path(tree_res.project_root), allowed_roots=(
+            [Path(s.path) for s in self.config.sources.code] if self.config.sources is not None else None))
         deep_read_res = deep_reader.select_and_read(
             target_modules=deep_read_targets,
             entities=[e.model_dump() for e in code_res.entities],
@@ -387,19 +388,22 @@ class KnowledgeSynthesizer:
         client: Optional[GlmClient],
     ) -> List[TableKnowledge]:
         """Stage 4: 真实调用 GLM 分析数据库表与状态机语义"""
-        raw_table_info: Dict[str, Dict[str, Any]] = {}
+        raw_table_info: Dict[tuple, Dict[str, Any]] = {}
         for t in schema_res.tables:
             col_names = [c.name for c in t.columns]
-            raw_table_info[t.table_name] = {
+            connected = schema_res.source_status.get(t.source_id) == "OK" if t.source_id else schema_res.connected
+            raw_table_info[(t.source_id, t.table_name)] = {
                 "columns": col_names,
                 "primary_key": t.primary_key,
-                "source": "runtime_database_schema" if schema_res.connected else "schema_scanner",
-                "confidence": "confirmed" if schema_res.connected else "strongly_inferred",
+                "source": (f"runtime_database_schema:{t.source_id}" if t.source_id else "runtime_database_schema") if connected else "schema_scanner",
+                "confidence": "confirmed" if connected else "strongly_inferred",
             }
 
         for ent in code_res.entities:
             if ent.mapped_table:
-                info = raw_table_info.setdefault(ent.mapped_table, {
+                if ent.source_id and any(key[0] and key[1] == ent.mapped_table for key in raw_table_info):
+                    continue  # Do not guess which database a code source maps to.
+                info = raw_table_info.setdefault(("", ent.mapped_table), {
                     "columns": list(ent.fields_or_constants),
                     "primary_key": "id",
                     "source": "code_scanner",
@@ -410,7 +414,7 @@ class KnowledgeSynthesizer:
                         info["columns"].append(f)
 
         tables: List[TableKnowledge] = []
-        for tbl_name, info in raw_table_info.items():
+        for (source_id, tbl_name), info in raw_table_info.items():
             t_lower = tbl_name.lower()
             cols = info["columns"]
             cols_lower = [c.lower() for c in cols]
@@ -442,6 +446,7 @@ class KnowledgeSynthesizer:
                 role = f"核心主任务/订单实体表: {tbl_name}"
 
             tk = TableKnowledge(
+                source_id=source_id,
                 table_name=tbl_name,
                 business_role=role,
                 table_type=table_type,
@@ -457,7 +462,7 @@ class KnowledgeSynthesizer:
 
         if client and tables:
             tbl_prompts = [
-                {"name": t.table_name, "columns": t.important_fields, "initial_type": t.table_type}
+                {"name": t.table_name, "source_id": t.source_id, "columns": t.important_fields, "initial_type": t.table_type}
                 for t in tables[:15]
             ]
             prompt = (
@@ -465,6 +470,7 @@ class KnowledgeSynthesizer:
                 f"{json.dumps(tbl_prompts, ensure_ascii=False)}\n\n"
                 f"请输出 JSON，键为 tables 列表，每个对象含：\n"
                 f"- table_name: 表名\n"
+                f"- source_id: 必须原样保留来源 ID，同名表来自不同数据库时不得合并\n"
                 f"- table_type: 必须严格分类为 current_state / master / callback / audit / configuration / unknown 之一\n"
                 f"- business_role: 精确的现场工控业务职责\n"
                 f"- status_meaning: 状态字段的枚举语义推断\n"
@@ -475,10 +481,10 @@ class KnowledgeSynthesizer:
                 res = client.generate_structured_json(prompt=prompt)
                 self.glm_call_count += 1
                 if isinstance(res, dict) and "tables" in res:
-                    glm_tbls = {item.get("table_name"): item for item in res["tables"] if isinstance(item, dict)}
+                    glm_tbls = {(item.get("source_id", ""), item.get("table_name")): item for item in res["tables"] if isinstance(item, dict)}
                     for t in tables:
-                        if t.table_name in glm_tbls:
-                            gt = glm_tbls[t.table_name]
+                        if (t.source_id, t.table_name) in glm_tbls:
+                            gt = glm_tbls[(t.source_id, t.table_name)]
                             if gt.get("table_type") in ("current_state", "master", "callback", "audit", "configuration"):
                                 t.table_type = gt["table_type"]
                             t.business_role = gt.get("business_role", t.business_role)
@@ -728,18 +734,19 @@ class KnowledgeSynthesizer:
 
             concepts.append(
                 BusinessConcept(
-                    concept_id=f"concept_{cst.table_name}_{primary_field}",
+                    concept_id=f"concept_{cst.source_id + '_' if cst.source_id else ''}{cst.table_name}_{primary_field}",
                     name=concept_name,
                     aliases=aliases,
                     description=f"关于系统核心执行中实体或任务的最新实时状态信息 ({cst.table_name}.{primary_field})",
                     canonical_source={
                         "type": "database",
+                        "source_id": cst.source_id,
                         "table": cst.table_name,
                         "field": primary_field,
                     },
                     secondary_sources=["系统执行日志"],
                     do_not_use_as_primary=callback_tables,
-                    query_guidance=f"查询当前实时状态时，建议优先通过 {cst.table_name} ORDER BY id DESC LIMIT 1 查询 {primary_field} 字段",
+                    query_guidance=f"来源 source_id={cst.source_id or '需通过 sources_list 确认'}；查询当前实时状态时，建议优先通过 {cst.table_name} ORDER BY id DESC LIMIT 1 查询 {primary_field} 字段",
                     confidence="strongly_inferred",
                     sources=["code_feature_inference"],
                 )
@@ -747,6 +754,7 @@ class KnowledgeSynthesizer:
 
             sot_rules.append(
                 SourceOfTruthRule(
+                    source_id=cst.source_id,
                     fact=f"{cst.table_name} 的实时主状态或最新执行进展",
                     canonical_source=f"{cst.table_name}.{primary_field}",
                     secondary_sources=["调度运行日志"],
@@ -760,12 +768,13 @@ class KnowledgeSynthesizer:
         for cbt in [t for t in tables if t.table_type == "callback"]:
             concepts.append(
                 BusinessConcept(
-                    concept_id=f"receipt_{cbt.table_name}",
+                    concept_id=f"receipt_{cbt.source_id + '_' if cbt.source_id else ''}{cbt.table_name}",
                     name=f"{cbt.table_name} 外部异步通信记录",
                     aliases=[f"{cbt.table_name}流水", "异步回调记录", "外部通信回执"],
                     description=f"外部系统异步回传的历史确认报文流水 ({cbt.table_name})",
                     canonical_source={
                         "type": "database",
+                        "source_id": cbt.source_id,
                         "table": cbt.table_name,
                         "field": cbt.important_fields[0] if cbt.important_fields else "id",
                     },
@@ -779,6 +788,7 @@ class KnowledgeSynthesizer:
 
             sot_rules.append(
                 SourceOfTruthRule(
+                    source_id=cbt.source_id,
                     fact=f"外部系统对 {cbt.table_name} 关联事项的历史异步回调或确认",
                     canonical_source=cbt.table_name,
                     secondary_sources=["integration logs"],

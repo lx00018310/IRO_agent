@@ -3,7 +3,7 @@ import os
 import re
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-from iro_agent.config import get_config
+from iro_agent.config import get_config, IROConfig
 from iro_agent.security.policy import validate_read_path
 from iro_agent.security.audit import AuditLogger
 
@@ -23,9 +23,11 @@ class LogReader:
 
     TIME_REGEX = re.compile(r"(\d{4}[-_]?\d{2}[-_]?\d{2}[ T_]?\d{2}[:_]?\d{2}[:_]?\d{2})")
 
-    def __init__(self, log_dirs: Optional[List[str | Path]] = None, audit_logger: Optional[AuditLogger] = None):
-        self.config = get_config()
-        raw_dirs = log_dirs or self.config.log_dirs
+    def __init__(self, log_dirs: Optional[List[str | Path]] = None, audit_logger: Optional[AuditLogger] = None,
+                 config: Optional[IROConfig] = None):
+        self.config = config or get_config()
+        raw_dirs = log_dirs if log_dirs is not None else (
+            [s.path for s in self.config.sources.logs] if self.config.sources is not None else self.config.log_dirs)
         self.log_dirs = [validate_read_path(d, self.config) for d in raw_dirs if Path(d).exists()]
         self.audit = audit_logger or AuditLogger()
 
@@ -61,6 +63,7 @@ class LogReader:
                 err = data.get("err", {})
                 return {
                     "file": file_path.name,
+                    "source_file": str(file_path),
                     "line_no": line_no,
                     "is_json": True,
                     "time": time_str,
@@ -84,6 +87,7 @@ class LogReader:
 
         return {
             "file": file_path.name,
+            "source_file": str(file_path),
             "line_no": line_no,
             "is_json": False,
             "time": extracted_time,
@@ -121,7 +125,9 @@ class LogReader:
         kw_lower = keyword.lower() if keyword else None
 
         for file_path in files:
-            validate_read_path(file_path, self.config)
+            resolved = validate_read_path(file_path, self.config)
+            if not any(resolved.is_relative_to(directory.resolve()) for directory in self.log_dirs):
+                continue
             try:
                 with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                     for line_no, line in enumerate(f, start=1):

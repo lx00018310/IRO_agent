@@ -42,6 +42,8 @@ class DatabaseReader:
     def execute_query(self, query: str, params: Optional[tuple] = None, max_rows: int = 100) -> List[Dict[str, Any]]:
         """执行只读查询，返回行记录字典列表"""
         self._validate_sql_readonly(query)
+        if not self.db_cfg.host or not self.db_cfg.database or not self.db_cfg.user:
+            raise ValueError("observability_gap: 未配置数据库来源")
 
         # 尝试动态导入 psycopg2
         try:
@@ -87,11 +89,14 @@ class DatabaseReader:
             )
             return results
         except Exception as e:
+            safe_error = str(e)
+            if self.db_cfg.password:
+                safe_error = safe_error.replace(self.db_cfg.password, "[REDACTED_SECRET]")
             self.audit.record(
                 tool_name="DatabaseReader",
                 operation="execute_query",
                 target=f"db={self.db_cfg.database}",
-                result_summary=f"数据库查询异常: {e}",
+                result_summary=f"数据库查询异常: {safe_error}",
                 status="ERROR",
             )
             raise

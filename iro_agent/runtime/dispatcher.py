@@ -80,6 +80,9 @@ class RuntimeDispatcher:
         - RUNTIME_FAULT: 强制接入 InvestigationHarness 闭环
         - FACT_QUERY / GENERAL_CHAT: 走通用只读辅助问答通道
         """
+        if self.config.sources is not None:
+            from iro_agent.setup import require_setup
+            require_setup(self.config)
         route = self.determine_route(message, context)
         ctx = context or {}
         image_path = ctx.get("image_path")

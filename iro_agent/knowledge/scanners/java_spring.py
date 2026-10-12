@@ -57,7 +57,7 @@ class JavaSpringScanner(BaseCodeScannerAdapter):
         symbol_map: Dict[str, str] = {}
         for f in java_files:
             try:
-                content = f.read_text(encoding="utf-8", errors="ignore")
+                content = self.read_source_file(f)
                 pkg_match = self.PACKAGE_PATTERN.search(content)
                 pkg = pkg_match.group(1) if pkg_match else ""
                 for cm in self.CLASS_PATTERN.finditer(content):
@@ -73,7 +73,7 @@ class JavaSpringScanner(BaseCodeScannerAdapter):
             for f in files:
                 if f.endswith(".xml"):
                     try:
-                        content = (Path(root_str) / f).read_text(encoding="utf-8", errors="ignore")
+                        content = self.read_source_file(Path(root_str) / f)
                         ns_match = self.MAPPER_XML_PATTERN.search(content)
                         if ns_match:
                             ns = ns_match.group(1).strip()
@@ -105,7 +105,7 @@ class JavaSpringScanner(BaseCodeScannerAdapter):
 
         for file_path in java_files:
             try:
-                content = file_path.read_text(encoding="utf-8", errors="ignore")
+                content = self.read_source_file(file_path)
                 content = redact_secrets(content)
                 rel_path = str(file_path.relative_to(self.project_root)).replace("\\", "/")
                 lines = content.splitlines()

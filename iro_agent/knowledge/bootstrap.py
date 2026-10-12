@@ -20,7 +20,7 @@ class ProjectKnowledgeBootstrapper:
     def __init__(self, config: Optional[IROConfig] = None):
         self.config = config or get_config()
         self.project_root = Path(self.config.project_root)
-        self.store = ProjectKnowledgeStore(base_dir=self.project_root if self.project_root.exists() else Path.cwd())
+        self.store = ProjectKnowledgeStore(base_dir=self.project_root if self.project_root.exists() else Path.cwd(), config=self.config)
 
     def run_bootstrap(
         self,
@@ -39,8 +39,11 @@ class ProjectKnowledgeBootstrapper:
 
         # 检查是否已存在
         if self.store.exists() and not refresh:
-            print("[信息] 已存在项目认知蓝图。如需重新构建，请使用 --refresh 参数。")
-            return self.store.load_blueprint()
+            existing = self.store.load_blueprint()
+            if existing is not None:
+                print("[信息] 已存在项目认知蓝图。如需重新构建，请使用 --refresh 参数。")
+                return existing
+            print("[信息] 旧蓝图与当前项目/来源配置不匹配，重新构建。")
 
         # 校验模型配置 (非 static_only 模式下严禁静默假成功)
         effective_use_llm = use_llm and not static_only
@@ -58,25 +61,28 @@ class ProjectKnowledgeBootstrapper:
 
         # Stage 0: 静态证据归集 (Static Evidence Collection)
         print("\n[Bootstrap 0/9] 静态证据多维归集 (Static Evidence Collection)...")
-        tree_scanner = TreeScanner(self.project_root)
-        tree_res = tree_scanner.scan()
+        source_status = []
+        if self.config.sources is not None:
+            from iro_agent.knowledge.source_scanner import collect_source_evidence
+            tree_res, schema_res, code_res, config_items, config_rules, source_status = collect_source_evidence(self.config)
+            for status in source_status:
+                print(f"  ├─ 来源 {status['source_id']}: {status['status']}")
+        else:
+            tree_res = TreeScanner(self.project_root).scan()
+            config_items, config_rules = ConfigCatalogScanner(self.project_root).scan()
+            schema_res = SchemaScanner(db_config=self.config.database).scan()
+            code_res = TargetedCodeScanner(self.project_root).scan()
         print(f"  ├─ 识别顶级模块: {', '.join(tree_res.top_level_modules) or '无'}")
         print(f"  ├─ 主力语言: {tree_res.primary_language}，技术框架: {', '.join(tree_res.frameworks) or '通用'}")
         print(f"  └─ 发现启动脚本: {len(tree_res.startup_scripts)} 个，部署脚本: {len(tree_res.deployment_scripts)} 个")
 
-        cfg_scanner = ConfigCatalogScanner(self.project_root)
-        config_items, config_rules = cfg_scanner.scan()
         print(f"  ├─ 提取有效配置项: {len(config_items)} 项 (已全面脱敏)，规则: {len(config_rules)} 条")
 
-        schema_scanner = SchemaScanner(db_config=self.config.database)
-        schema_res = schema_scanner.scan()
         if schema_res.connected:
             print(f"  ├─ 探得数据库业务表: {len(schema_res.tables)} 张")
         else:
             print(f"  ├─ 数据库离线或未直连，采用代码实体静态反推")
 
-        code_scanner = TargetedCodeScanner(self.project_root)
-        code_res = code_scanner.scan()
         g_nodes = len(code_res.code_graph.get("entities", [])) if code_res.code_graph else 0
         g_edges = len(code_res.code_graph.get("edges", [])) if code_res.code_graph else 0
         print(f"  └─ 代码实体与拓扑图: {code_res.detected_models_count} 模型 / {g_nodes} 节点 / {g_edges} 关系边")
@@ -99,7 +105,7 @@ class ProjectKnowledgeBootstrapper:
         print("[Bootstrap 6/9] 外部协同、PLC与机器人集成映射 (External System Learning)...")
         print("[Bootstrap 7/9] 批判性推论审计与未知暗区审查 (Critic Pass)...")
 
-        synthesizer = KnowledgeSynthesizer(glm_cfg=self.config.glm)
+        synthesizer = KnowledgeSynthesizer(glm_cfg=self.config.glm, config=self.config)
         blueprint = synthesizer.synthesize(
             tree_res=tree_res,
             schema_res=schema_res,
@@ -113,6 +119,14 @@ class ProjectKnowledgeBootstrapper:
         print("\n[Bootstrap 8/9] 真实要素程序化核验与置信度校准 (Validation)...")
         validator = BlueprintValidator()
         sanitized_bp, warnings = validator.validate(blueprint, schema_res, code_res)
+        if self.config.sources is not None:
+            from iro_agent.readers.sources import SourceReaders
+            sanitized_bp.data_sources = SourceReaders(self.config).inventory()["sources"]
+            sanitized_bp.metadata["source_scan_status"] = source_status
+            sanitized_bp.metadata["setup_fingerprint"] = self.config.setup_fingerprint()
+            for status in source_status:
+                if status["status"] != "OK":
+                    sanitized_bp.known_unknowns.append(f"来源 {status['source_id']} 未读取：observability_gap")
         for w in warnings:
             print(f"  [校验提示] {w}")
 

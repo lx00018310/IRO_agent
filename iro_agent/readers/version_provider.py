@@ -215,22 +215,26 @@ class VersionReaderResolver:
         cfg = config or get_config()
         audit = audit_logger or AuditLogger()
 
-        git_adapter = GitReaderAdapter(audit_logger=audit)
-        wrelease_adapter = WReleaseReaderAdapter(audit_logger=audit)
+        git_adapter = None
+        wrelease_adapter = None
+        if cfg.primary_code_root and Path(cfg.primary_code_root).is_dir():
+            git_adapter = GitReaderAdapter(git_reader=GitReader(repo_dir=cfg.primary_code_root, audit_logger=audit))
+        if cfg.wrelease_dir and Path(cfg.wrelease_dir).is_dir():
+            wrelease_adapter = WReleaseReaderAdapter(wrelease_reader=WReleaseReader(delivery_dir=cfg.wrelease_dir, audit_logger=audit))
 
         if prefer_provider == "wrelease":
-            if wrelease_adapter.is_available():
+            if wrelease_adapter and wrelease_adapter.is_available():
                 return wrelease_adapter, "WReleaseReader"
-            if git_adapter.is_available():
+            if git_adapter and git_adapter.is_available():
                 return git_adapter, "GitReader"
             return None, "None"
 
         # 默认规则：Git 优先
-        if git_adapter.is_available():
+        if git_adapter and git_adapter.is_available():
             return git_adapter, "GitReader"
 
         # 回退：WRelease 兜底
-        if wrelease_adapter.is_available():
+        if wrelease_adapter and wrelease_adapter.is_available():
             return wrelease_adapter, "WReleaseReader"
 
         return None, "None"

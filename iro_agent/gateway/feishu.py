@@ -266,7 +266,7 @@ class FeishuGateway(GatewayAdapter):
         print(f"\n[飞书网关] 收到事件推送 (chat_type={msg.chat_type}, msg_type={msg.message_type})")
 
         session_id = f"feishu:{msg.chat_type}:{msg.chat_id}"
-        target_project = (
+        target_project = self.config.project_name if self.config.sources is not None else (
             self.config.project_mapping.feishu.get(msg.chat_id, {}).get("project", self.config.project_name)
         )
 

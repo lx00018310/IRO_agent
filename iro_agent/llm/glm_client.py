@@ -54,7 +54,7 @@ class GlmClient:
 
     def _build_tools_schema(self) -> List[Dict[str, Any]]:
         """构建 OpenAI / GLM 兼容的只读工具定义清单"""
-        return [
+        schema = [
             {
                 "type": "function",
                 "function": {
@@ -260,22 +260,28 @@ class GlmClient:
                 "type": "function",
                 "function": {
                     "name": "web_fetch",
-                    "description": "安全通用只读网页探针：支持各类外部或内网工控系统、调度日志页面 (如 DevExpress WES、Vue、React、ASP.NET、Prometheus API 等)。具备无头浏览器真实渲染、Cookie会话维持、表单登录、表格自动转Markdown及后台接口嗅探能力",
+                    "description": "GET 读取当前项目登记的精确 HTTP 接口。省略 url/source_id 可读取全部接口；不重定向、不登录、不提交表单。",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "url": {"type": "string", "description": "目标网页或日志接口完整的 HTTP/HTTPS 地址"},
                             "keyword": {"type": "string", "description": "可选过滤关键词 (如 ERROR, dispatch, 11号月台)"},
-                            "username": {"type": "string", "description": "可选身份验证用户名 (如 admin)"},
-                            "password": {"type": "string", "description": "可选密码 (若为空可传空字符串)"},
-                            "cookies": {"type": "string", "description": "可选 Cookie 字符串或已登录凭据 (如 ASP.NET_SessionId=xxx; token=yyy)，用于绕过登录直接只读访问目标系统内部页面"},
-                            "mode": {"type": "string", "enum": ["auto", "browser", "http"], "description": "可选抓取模式: auto(自适应升级, 默认), browser(强制无头浏览器真实渲染), http(极速HTTP模式)"},
                         },
-                        "required": ["url"],
+                        "required": [],
                     },
                 },
             },
         ]
+        schema.append({"type": "function", "function": {
+            "name": "sources_list", "description": "列出当前项目的所有来源 ID、类型、用途和位置；不含凭据",
+            "parameters": {"type": "object", "properties": {}},
+        }})
+        for tool in schema:
+            if tool["function"]["name"] in {"log_search", "code_search", "db_query", "db_list_tables", "db_describe_table", "web_fetch"}:
+                tool["function"]["parameters"]["properties"]["source_id"] = {
+                    "type": "string", "description": "可选来源 ID，省略时分别读取该类所有来源；结果保留来源标识",
+                }
+        return schema
 
     def chat_completion(
         self,
@@ -289,6 +295,11 @@ class GlmClient:
         import time
         current_time_str = time.strftime("%Y-%m-%d %H:%M:%S")
         sys_content = f"{SYSTEM_PROMPT}\n【工控机当前时间锚点】: {current_time_str}\n"
+        if self.config.sources is not None:
+            from iro_agent.readers.sources import SourceReaders
+            inventory = SourceReaders(self.config, self.audit).inventory()
+            sys_content += "【当前唯一项目及数据来源】：" + json.dumps(inventory, ensure_ascii=False) + "\n"
+            sys_content += "必须区分来源 ID；某来源不可用是观测缺口，不能视为零记录或无异常。同名表必须指定 source_id 核验。\n"
         formatted_messages = [{"role": "system", "content": sys_content}]
         for m in messages:
             content = m.get("content", "")
@@ -400,12 +411,15 @@ class GlmClient:
                 else:
                     tool_res = {"error": f"工具 {func_name} 未实现"}
 
-                tool_res_str = json.dumps(tool_res, ensure_ascii=False, default=str)
+                from iro_agent.readers.sources import summarize_source_output
+                prompt_result = summarize_source_output(tool_res)
+                tool_res_str = json.dumps(prompt_result, ensure_ascii=False, default=str)
                 if verbose:
                     preview = tool_res_str if len(tool_res_str) <= 1000 else tool_res_str[:1000] + f"... [已截断，共 {len(tool_res_str)} 字符]"
                     print(f"  └─ 返回: {preview}")
 
-                if len(tool_res_str) > 1200:
+                is_source_result = isinstance(tool_res, dict) and isinstance(tool_res.get("sources"), list)
+                if len(tool_res_str) > 1200 and not is_source_result:
                     tool_res_str = tool_res_str[:1200] + "...[已截断过长事实数据]"
 
                 formatted_messages.append({

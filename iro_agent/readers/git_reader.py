@@ -13,7 +13,9 @@ class GitReader:
 
     def __init__(self, repo_dir: Optional[str | Path] = None, audit_logger: Optional[AuditLogger] = None):
         self.config = get_config()
-        raw_repo = repo_dir or self.config.project_root
+        raw_repo = repo_dir or self.config.primary_code_root
+        if not raw_repo:
+            raise ValueError("未配置代码版本来源")
         self.repo_dir = validate_read_path(raw_repo, self.config)
         self.audit = audit_logger or AuditLogger()
 

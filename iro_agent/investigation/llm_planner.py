@@ -227,6 +227,8 @@ class LLMInvestigationPlanner:
                 "reliability": ev.reliability,
                 "availability": avail,
             }
+            if ev.provenance.get("source_results") is not None:
+                ev_dict["source_results"] = ev.provenance["source_results"]
             ev_lines.append(f"- [{ev.evidence_id}] [{tier_val}] {ev.source_name}: {fact}")
             ev_lines.append(f"    详情: {json.dumps(ev_dict, ensure_ascii=False)}")
         evidence_text = "\n".join(ev_lines) if ev_lines else "（尚未采集到客观证据）"

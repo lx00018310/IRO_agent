@@ -46,6 +46,8 @@ class ConfigCatalogScanner:
 
     def _parse_config_file(self, file_path: Path, max_items: int) -> List[ConfigItem]:
         items: List[ConfigItem] = []
+        if not file_path.resolve().is_relative_to(self.root_dir.resolve()):
+            return items
         try:
             rel_path = file_path.relative_to(self.root_dir).as_posix()
         except ValueError:

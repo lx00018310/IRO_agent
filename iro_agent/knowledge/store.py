@@ -4,7 +4,7 @@ import time
 import shutil
 from pathlib import Path
 from typing import Optional, List, Dict, Any
-from iro_agent.config import get_config
+from iro_agent.config import get_config, IROConfig
 from iro_agent.knowledge.models import (
     ProjectBlueprint,
     BusinessConcept,
@@ -17,10 +17,10 @@ from iro_agent.knowledge.models import (
 class ProjectKnowledgeStore:
     """项目认知蓝图存储与检索管理器 (分离于 IncidentStore 与对话记忆)"""
 
-    def __init__(self, base_dir: Optional[Path] = None):
-        self.config = get_config()
+    def __init__(self, base_dir: Optional[Path] = None, config: Optional[IROConfig] = None):
+        self.config = config or get_config()
         # 优先以项目根目录或运行根目录下的 .iro_agent 为存储目录
-        root = base_dir or Path(self.config.project_root) if Path(self.config.project_root).exists() else Path.cwd()
+        root = base_dir or (Path(self.config.project_root) if self.config.project_root and Path(self.config.project_root).exists() else Path.cwd())
         self.store_dir = root / ".iro_agent"
         self.store_dir.mkdir(parents=True, exist_ok=True)
         self.blueprint_path = self.store_dir / "project_blueprint.json"
@@ -35,7 +35,7 @@ class ProjectKnowledgeStore:
     def load_blueprint(self, reload: bool = False) -> Optional[ProjectBlueprint]:
         """加载已持久化的项目蓝图，并自动合并手动覆盖规则"""
         if self._cached_blueprint and not reload:
-            return self._cached_blueprint
+            return self._cached_blueprint if self._matches_project(self._cached_blueprint) else None
 
         if not self.blueprint_path.exists():
             return None
@@ -44,6 +44,8 @@ class ProjectKnowledgeStore:
             with open(self.blueprint_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             blueprint = ProjectBlueprint.model_validate(data)
+            if not self._matches_project(blueprint):
+                return None
             # 应用手工规则覆盖
             blueprint = self.apply_manual_overrides(blueprint)
             self._cached_blueprint = blueprint
@@ -51,6 +53,11 @@ class ProjectKnowledgeStore:
         except Exception as e:
             # 记录异常或回退
             return None
+
+    def _matches_project(self, blueprint):
+        return self.config.sources is None or (
+            blueprint.project.project_name == self.config.project_name
+            and blueprint.metadata.get("setup_fingerprint") == self.config.setup_fingerprint())
 
     def backup_blueprint(self) -> Optional[Path]:
         """在更新前将当前蓝图备份到历史目录"""
@@ -90,11 +97,11 @@ class ProjectKnowledgeStore:
             if "source_of_truth_rules" in overrides:
                 override_rules = [SourceOfTruthRule.model_validate(r) for r in overrides["source_of_truth_rules"]]
                 # 按 fact 覆盖已有的或插入
-                override_facts = {r.fact: r for r in override_rules}
+                override_facts = {(r.source_id, r.fact): r for r in override_rules}
                 new_rules = []
                 for r in blueprint.source_of_truth_rules:
-                    if r.fact in override_facts:
-                        new_rules.append(override_facts.pop(r.fact))
+                    if (r.source_id, r.fact) in override_facts:
+                        new_rules.append(override_facts.pop((r.source_id, r.fact)))
                     else:
                         new_rules.append(r)
                 new_rules.extend(override_facts.values())
@@ -134,7 +141,8 @@ class ProjectKnowledgeStore:
         for r in bp.source_of_truth_rules:
             sec = ", ".join(r.secondary_sources) or "无"
             inv = ", ".join(r.invalid_primary_sources) or "无"
-            lines.append(f"| {r.fact} | `{r.canonical_source}` | {sec} | **{inv}** | {r.reason} |")
+            canonical = f"{r.source_id}:{r.canonical_source}" if r.source_id else r.canonical_source
+            lines.append(f"| {r.fact} | `{canonical}` | {sec} | **{inv}** | {r.reason} |")
 
         lines.extend([
             "",
@@ -159,7 +167,8 @@ class ProjectKnowledgeStore:
         for t in bp.database_tables:
             status = ", ".join(t.status_fields) or "无"
             time_f = ", ".join(t.time_fields) or "无"
-            lines.append(f"| `{t.table_name}` | {t.business_role} | `{t.table_type}` | `{t.primary_key}` | {status} | {time_f} |")
+            label = f"{t.source_id}:{t.table_name}" if t.source_id else t.table_name
+            lines.append(f"| `{label}` | {t.business_role} | `{t.table_type}` | `{t.primary_key}` | {status} | {time_f} |")
 
         lines.extend([
             "",

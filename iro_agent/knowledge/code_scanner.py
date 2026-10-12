@@ -9,6 +9,7 @@ from iro_agent.knowledge.scanners.composite import CompositeCodeScanner
 
 
 class CodeEntity(BaseModel):
+    source_id: str = ""
     name: str
     file_path: str
     entity_type: str  # model, service, controller, enum, mapper

@@ -177,6 +177,10 @@ class EvidenceEvaluator:
 
         reliability = 0.0 if is_error else (0.95 if eval_res.verdict == "FACT" else 0.7)
         relevance = 0.8 if eval_res.verdict == "FACT" else 0.5
+        provenance = {"tool": step.tool, "step_id": step.step_id, "verdict": eval_res.verdict}
+        if isinstance(tool_output, dict) and isinstance(tool_output.get("sources"), list):
+            from iro_agent.readers.sources import summarize_source_output
+            provenance["source_results"] = summarize_source_output(tool_output)
 
         return EvidenceRecord(
             evidence_id=f"EV_{step.step_id}",
@@ -192,5 +196,5 @@ class EvidenceEvaluator:
             contradicts=[],
             is_error=is_error,
             error_type=error_type,
-            provenance={"tool": step.tool, "step_id": step.step_id, "verdict": eval_res.verdict},
+            provenance=provenance,
         )

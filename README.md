@@ -3,7 +3,7 @@
 > **IRO_agent is an evidence-driven industrial diagnosis harness.**  
 > It learns a project's operational model, investigates incidents through iterative evidence gathering, and evaluates its own diagnosis quality through reproducible datasets.
 
-[![Tests](https://img.shields.io/badge/tests-210%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-267%20passed-brightgreen.svg)]()
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)]()
 [![Security](https://img.shields.io/badge/boundary-Strict%20Read--Only-red.svg)]()
 
@@ -27,7 +27,7 @@
 └────────────────────────┴───────────────────────┴───────────────────────┘
 ```
 
-1. **绝对只读安全硬防御 (Strict Read-Only)**：无写文件、无执行 Shell、无提交 Git、无写 DB 权限。双层只读拦截与脱敏审计，严守生产安全底线。
+1. **绝对只读安全硬防御 (Strict Read-Only)**：对被诊断系统不写文件、不提交 Git、不写业务数据库；诊断工具不提供任意 Shell 执行能力。配置向导仅保存 IRO 自身配置，内部审计、记忆和认知缓存仍由 IRO 管理。双层只读拦截与脱敏审计，严守生产安全底线。
 2. **严禁无据断言 (Evidence Provenance)**：所有推断均需绑定具体的日志行、配置键或数据库记录，禁止凭空猜测。
 3. **真实物理与数字边界划分**：数字观测充分无异常时，支持合法的现场物理排查升级，避免将观测缺口盲目定性为硬件故障。
 
@@ -133,20 +133,58 @@ playwright install chromium
 > playwright install chromium
 > ```
 
-### 2. 配置文件说明
+### 2. 首次运行：必须完成项目配置向导
 
-复制 `config.example.json` 为 `config.json`，配置项目路径与相关服务参数：
-```bash
-cp config.example.json config.json
+一个 IRO_agent 实例只管理一个项目；同项目支持多个代码目录、PostgreSQL 数据库、日志目录和只读 HTTP 接口。无需先复制示例或手工编辑 JSON：
+
+```powershell
+python -m iro_agent.cli setup
 ```
+
+向导顺序：**项目及工作目录 → 添加多个来源 → 模型及可选飞书凭据 → 校验、脱敏摘要、确认保存**。在来源管理中可反复添加、删除、查看，每种类型都可以有多个来源；不需要的类型可跳过，至少保留一个来源。路径支持中文、空格及带引号的 Windows 路径。输入 `q` 或按 Ctrl+C 取消，`-` 清空可选项；完成前不会覆盖原配置。
+
+未完成向导时，`init`、`chat`、`investigate`、`gateway start`、`eval` 都会阻断并返回非零退出码。`eval` 可能调用真实来源及模型，也需要完成配置。Windows 双击 `start_iro_agent.bat` 会先检查，未完成时自动进入向导。已有旧版 `config.json` 也需要执行一次 `setup`，旧源码、数据库、日志及凭据会导入供确认；当前用户配置不会在升级代码时被自动改写。
+
+以后追加或删除来源，重新运行 `setup` 即可。直接修改项目身份、来源位置或用途会使完成标记失效，必须重新走向导；密码及环境变量凭据值的轮换不改变来源身份。来源变化后旧认知蓝图停止用于查询，运行 `init` 重建即可。帮助、配置查看、自检、来源检查和离线测试（`pytest`）可在配置完成前使用。
+
+```powershell
+# 查看来源（不发起现场请求）
+python -m iro_agent.cli sources
+
+# 显式检查所有来源：目录检查 / PostgreSQL SELECT 1 / HTTP GET
+python -m iro_agent.cli sources --check
+
+# 检查配置流程完成状态
+python -m iro_agent.cli setup --check
+
+# 指定配置文件时，--config 放在命令前；一个进程只加载该文件对应的项目
+python -m iro_agent.cli --config D:/现场/IRO/config.json setup
+```
+
+配置文件默认是**当前目录**的 `config.json`；也可通过 `IRO_CONFIG_PATH` 指定。不会自动读取其他安装目录、旧项目或 `config.example.json`。示例文件仅用于说明配置结构，不代表已完成配置。
+
+数据库密码可以选择环境变量名或隐蔽输入后保存在本机配置中。HTTP 鉴权通过请求头环境变量配置，向导只保存变量名。例如 PowerShell 中：
+
+```powershell
+$env:IRO_GLM_API_KEY = "你的模型Key"
+$env:ORDERS_DB_PASSWORD = "只读数据库密码"
+$env:WES_AUTHORIZATION = "Bearer 你的令牌"
+python -m iro_agent.cli setup
+```
+
+在数据库来源里填写密码环境变量 `ORDERS_DB_PASSWORD`；在 HTTP 来源里添加请求头 `Authorization`，引用 `WES_AUTHORIZATION`。这些变量应在运行 IRO 的同一个进程环境中设置；临时 PowerShell 变量不会自动传给另一个双击启动的窗口。向导不会把环境变量的凭据值写入 JSON。模型 Key 可跳过以使用 `init --static-only`；在线问答和诊断仍需要有效模型凭据。
+
+查询时模型会收到来源 ID、类型、用途和位置。代码、日志、数据库工具可用 `source_id` 精确选择来源；省略时分别读取该类所有来源，返回结果及失败项均保留来源 ID。例如可提问：“在所有代码目录中查找 dispatch”“分别查看业务库和调度库的任务状态”“只查询 db-wes 的任务表”。数据库只支持现有 PostgreSQL 驱动，跨库查询会分别执行 SQL，不支持跨数据库 SQL JOIN。版本工具继续以第一个代码来源为源码版本源，并保留可选 WRelease 交付版本源。
+
+HTTP 来源登记的是**精确的只读 GET 端点**，包括固定查询参数；不会接受其他 URL、动态追加路径、重定向、浏览器操作或表单登录。多个接口可逐个登记并统一读取。来源检查可在向导中显式跳过；检查失败时，只有明确选择保留才允许保存。运行时部分来源不可用会同时返回已有结果和观测缺口，不会被当作零记录或无异常；故障调查可指定可用来源进一步核实。
 
 ### 3. 项目认知初始化 (Project Learning)
 ```bash
 # 执行深度项目认知自举
-python -m iro_agent.cli init --deep
+python -m iro_agent.cli init
 
 # 纯静态模式 (无需外部 LLM API)
-python -m iro_agent.cli init --deep --static-only
+python -m iro_agent.cli init --static-only
 ```
 
 ### 4. 交互式诊断与网关服务
@@ -167,7 +205,7 @@ python -m iro_agent.cli eval dev
 python -m iro_agent.cli eval regression
 
 # 运行外部私有盲测集 (需提供测试集路径)
-python -m iro_agent.cli eval external --dataset-dir /path/to/blind_cases
+python -m iro_agent.cli eval external --dataset D:/path/to/blind_cases
 ```
 评测报告与轨迹回放将自动生成至 `.eval_runs/<run_id>/report.md`。
 
@@ -175,7 +213,7 @@ python -m iro_agent.cli eval external --dataset-dir /path/to/blind_cases
 ```bash
 pytest -q
 ```
-当前工程包含 210 项针对状态机、动态重规划、假设生命周期、安全校验与端到端同构分发的自动化测试 + DEV/REGRESSION 评测闭环，保持 100% 通过。
+当前本机全量自动化测试为 **267 项通过**，其中本次增加 57 项配置引导、多源读取、来源隔离及回归验证。现场数据源连通性与在线模型服务仍需在实际运行环境中验证。
 
 ### 7. 工控机版本更新与快捷启动
 

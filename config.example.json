@@ -1,22 +1,16 @@
 {
-  "project_name": "TASK-013",
-  "project_root": "CHANGE_ME_HERE",
-  "wrelease_dir": "CHANGE_ME_HERE",
-  "log_dirs": [
-    "CHANGE_ME_HERE",
-    "CHANGE_ME_HERE"
-  ],
+  "project_name": "",
+  "project_root": "",
+  "wrelease_dir": "",
   "allowed_paths": [],
-  "database": {
-    "host": "CHANGE_ME_HERE",
-    "port": CHANGE_ME_HERE,
-    "user": "CHANGE_ME_HERE",
-    "password": "CHANGE_ME_HERE",
-    "database": "CHANGE_ME_HERE",
-    "connect_timeout": 5
+  "sources": {
+    "code": [],
+    "databases": [],
+    "logs": [],
+    "http": []
   },
   "glm": {
-    "api_key": "YOUR_GLM_API_KEY",
+    "api_key": "",
     "api_base": "https://open.bigmodel.cn/api/paas/v4",
     "model": "glm-5.3-flash",
     "timeout": 60
@@ -27,19 +21,12 @@
     "listen_port": 8080
   },
   "feishu": {
-    "enabled": true,
-    "app_id": "YOUR_FEISHU_APP_ID",
-    "app_secret": "YOUR_FEISHU_APP_SECRET",
+    "enabled": false,
+    "app_id": "",
+    "app_secret": "",
     "bot_name": "IRO_agent",
     "receive_group_at": true,
     "receive_private": true
-  },
-  "project_mapping": {
-    "feishu": {
-      "oc_example_chat_id": {
-        "project": "TASK-013"
-      }
-    }
   },
   "storage": {
     "audit_db_path": "iro_agent_audit.db",

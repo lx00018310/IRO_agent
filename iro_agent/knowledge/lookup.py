@@ -99,6 +99,7 @@ class ProjectLookupEngine:
 
             if text_hit or table_hit:
                 matched_rules.append({
+                    "source_id": r.source_id,
                     "fact": r.fact,
                     "canonical_source": r.canonical_source,
                     "secondary_sources": r.secondary_sources,
@@ -132,6 +133,7 @@ class ProjectLookupEngine:
             )
             if is_hit:
                 matched_tables.append({
+                    "source_id": t.source_id,
                     "table_name": t.table_name,
                     "business_role": t.business_role,
                     "table_type": t.table_type,

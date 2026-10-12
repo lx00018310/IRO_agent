@@ -51,6 +51,7 @@ class BusinessConcept(BaseModel):
 
 
 class SourceOfTruthRule(BaseModel):
+    source_id: str = ""
     fact: str
     canonical_source: str
     secondary_sources: List[str] = Field(default_factory=list)
@@ -61,6 +62,7 @@ class SourceOfTruthRule(BaseModel):
 
 
 class TableKnowledge(BaseModel):
+    source_id: str = ""
     table_name: str
     business_role: str
     table_type: str = "unknown"  # current_state, master, transaction, history, callback, audit, configuration, mapping, unknown
@@ -121,6 +123,7 @@ class ProjectOverview(BaseModel):
 
 class ConfigItem(BaseModel):
     """配置项认知数据模型"""
+    source_id: str = ""
     config_id: str
     file_path: str
     relative_path: str

@@ -42,7 +42,7 @@ class PythonScanner(BaseCodeScannerAdapter):
         for file_path in candidate_files:
             rel_path = str(file_path.relative_to(self.project_root)).replace("\\", "/")
             try:
-                content = file_path.read_text(encoding="utf-8", errors="ignore")
+                content = self.read_source_file(file_path)
                 content = redact_secrets(content)
                 lines = content.splitlines()
 

@@ -42,7 +42,7 @@ class MyBatisScanner(BaseCodeScannerAdapter):
 
         for file_path in xml_files:
             try:
-                content = file_path.read_text(encoding="utf-8", errors="ignore")
+                content = self.read_source_file(file_path)
                 ns_match = self.MAPPER_TAG_PATTERN.search(content)
                 if not ns_match:
                     continue  # 不是 MyBatis mapper xml
