@@ -57,12 +57,14 @@ def test_setup_can_register_two_of_each_kind_and_never_persist_env_values(tmp_pa
         answers += ["3", name, "服务日志", str(tmp_path / name)]
     for name in ("http_a", "http_b"):
         answers += ["4", name, "状态查询", "http://127.0.0.1:9999/" + name, "y", "Authorization", "TEST_HTTP_AUTH", "n"]
+    answers += ["5", "docs", "接口文档", str(tmp_path)]
     answers += ["0", "", "", "n", "n", "n", "y"]
     iterator = iter(answers)
     target = tmp_path / "config.json"
     config = SetupWizard(target, input_fn=lambda _: next(iterator), secret_fn=lambda _: "").run()
     assert config.is_setup_complete()
     assert all(len(getattr(config.sources, kind)) == 2 for kind in ("code", "logs", "databases", "http"))
+    assert len(config.sources.other) == 1 and config.sources.other[0].id == "docs"
     assert load_config(str(target)).is_setup_complete()
     stored = target.read_text(encoding="utf-8")
     output = capsys.readouterr().out
@@ -165,6 +167,19 @@ def test_atomic_save_rejects_concurrent_edit_and_preserves_file(tmp_path):
     with pytest.raises(ValueError, match="其他程序修改"):
         atomic_save(target, {"new": True}, b"original")
     assert target.read_bytes() == b"changed"
+
+
+def test_wizard_other_source_accepts_file_or_directory_and_retries_missing(tmp_path):
+    docs = tmp_path / "apidoc"
+    docs.mkdir()
+    (docs / "api.md").write_text("# API\n", encoding="utf-8")
+    answers = iter(["P", str(tmp_path), "",
+                    "1", "code", "代码", str(docs),
+                    "5", "docs", "接口文档", str(tmp_path / "missing"), str(docs / "api.md"),
+                    "0", "", "", "n", "n", "n", "y"])
+    config = SetupWizard(tmp_path / "config.json", input_fn=lambda _: next(answers)).run()
+    assert config.is_setup_complete()
+    assert config.sources.other[0].path == (docs / "api.md").as_posix()
 
 
 def test_atomic_save_failure_keeps_original_and_cleans_temp(tmp_path, monkeypatch):

@@ -121,6 +121,11 @@ class ToolRegistry:
             if any(k in args and not isinstance(args[k], str) for k in ("url", "source_id")):
                 return False, "web_fetch 的 url/source_id 必须为字符串"
 
+        # 9. 针对 other_read 的参数校验
+        if tool_name == "other_read":
+            if any(k in args and not isinstance(args[k], str) for k in ("query", "keyword", "file", "source_id")):
+                return False, "other_read 的 query/keyword/file/source_id 必须为字符串"
+
         return True, None
 
     def get_prompt_description(self) -> str:
@@ -202,6 +207,13 @@ class ToolRegistry:
             description="GET 读取已登记的精确 HTTP 端点；不跟随重定向，不登录或提交表单",
             parameters_schema={"url": "str, 选填, 必须与登记 URL 完全一致", "source_id": "str, 选填；均省略时读取全部 HTTP 来源"},
             tier=EvidenceTier.TIER_2_SYSTEM_BOUNDARY,
+        ))
+        self.register(ToolSpec(
+            name="other_read",
+            description="只读查看已登记的其他资料来源（API/接口文档、数据字典、导出的 JSON/CSV 等本地文件）；目录来源先列出或按文件名匹配，再读取文本内容",
+            parameters_schema={"query": "str, 选填, 目标文件名或相对路径关键词", "keyword": "str, 选填, 按行过滤内容关键词",
+                               "file": "str, 选填, 目标文件名或相对路径", "source_id": "str, 选填，精确选择其他来源"},
+            tier=EvidenceTier.TIER_1B_STATIC_FACTS,
         ))
         if include_legacy_pipelines:
             self.register(ToolSpec(

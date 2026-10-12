@@ -100,6 +100,18 @@ class DatabaseSourceConfig(DatabaseConfig, SourceConfig):
         return DatabaseConfig(**data)
 
 
+class OtherSourceConfig(SourceConfig):
+    """任意本地只读资料：API/接口文档、数据字典、说明文件、导出的 JSON/CSV 等。"""
+    path: str = Field(min_length=1)  # Directory (recursive) or a single file.
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        if not Path(value).is_absolute():
+            raise ValueError("其他来源必须是绝对路径（目录或单个文件）")
+        return value
+
+
 class HttpSourceConfig(SourceConfig):
     url: str
     headers_env: dict[str, str] = Field(default_factory=dict)
@@ -139,16 +151,19 @@ class SourcesConfig(BaseModel):
     logs: list[DirectorySourceConfig] = Field(default_factory=list)
     databases: list[DatabaseSourceConfig] = Field(default_factory=list)
     http: list[HttpSourceConfig] = Field(default_factory=list)
+    other: list[OtherSourceConfig] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def unique_sources(self):
         ids, locations = set(), set()
-        for kind in ("code", "logs", "databases", "http"):
+        for kind in ("code", "logs", "databases", "http", "other"):
             for source in getattr(self, kind):
                 if source.id.lower() in ids:
                     raise ValueError(f"来源 ID 重复: {source.id}")
                 ids.add(source.id.lower())
                 if kind in ("code", "logs"):
+                    location = (kind, os.path.normcase(str(Path(source.path).resolve())))
+                elif kind == "other":
                     location = (kind, os.path.normcase(str(Path(source.path).resolve())))
                 elif kind == "http":
                     location = (kind, source.url)
@@ -204,7 +219,7 @@ class IROConfig(BaseModel):
 
     def is_setup_complete(self) -> bool:
         return bool(self.project_name.strip() and self.project_root and self.sources is not None
-                    and any(getattr(self.sources, kind) for kind in ("code", "logs", "databases", "http"))
+                    and any(getattr(self.sources, kind) for kind in ("code", "logs", "databases", "http", "other"))
                     and self.setup.version == 1 and self.setup.completed_at
                     and self.setup.fingerprint == self.setup_fingerprint())
 
@@ -217,7 +232,7 @@ class IROConfig(BaseModel):
             paths.add(os.path.abspath(self.wrelease_dir))
         source_paths = []
         if self.sources is not None:
-            source_paths = [s.path for s in self.sources.code + self.sources.logs]
+            source_paths = [s.path for s in self.sources.code + self.sources.logs + self.sources.other]
         for ld in (self.log_dirs if self.sources is None else source_paths):
             if ld and os.path.exists(ld):
                 paths.add(os.path.abspath(ld))

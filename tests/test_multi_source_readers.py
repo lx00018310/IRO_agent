@@ -7,7 +7,7 @@ from unittest.mock import Mock, MagicMock
 import pytest
 from pydantic import ValidationError
 
-from iro_agent.config import HttpSourceConfig, SourcesConfig
+from iro_agent.config import HttpSourceConfig, OtherSourceConfig, SourcesConfig
 from iro_agent.investigation.evaluator import EvidenceEvaluator
 from iro_agent.investigation.harness import InvestigationHarness
 from iro_agent.investigation.models import InvestigationStep, EvidenceTier
@@ -199,6 +199,70 @@ def test_missing_http_env_does_not_make_request(project_config, http_server):
     assert hits == []
 
 
+@pytest.fixture
+def other_sources(project_config):
+    docs = project_config.sources.other
+    api_doc = Path(project_config.sources.code[0].path).parent / "docs_a"
+    exports = Path(project_config.sources.code[0].path).parent / "docs_b"
+    api_doc.mkdir(exist_ok=True)
+    exports.mkdir(exist_ok=True)
+    (api_doc / "api.md").write_text("# API 手册\nGET /orders 查询订单\nGET /dispatch 调度接口\n", encoding="utf-8")
+    (api_doc / "data-dict.md").write_text("# 数据字典\ntask 表记录月台任务\n", encoding="utf-8")
+    (api_doc / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\nbinary")
+    (exports / "orders-export.csv").write_text("order_id,status\n1,done\n", encoding="utf-8")
+    docs.append(OtherSourceConfig(id="docs_a", description="接口文档目录", path=str(api_doc)))
+    docs.append(OtherSourceConfig(id="docs_b", description="导出数据", path=str(exports / "orders-export.csv")))
+    return api_doc, exports
+
+
+def test_other_read_lists_then_reads_selected_file_per_source(project_config, other_sources):
+    api_doc, _ = other_sources
+    readers = SourceReaders(project_config)
+    single = readers.other_read(query="api", source_id="docs_a")
+    assert single["status"] == "OK"
+    assert "GET /orders 查询订单" in single["documents"][0]["content"]
+    assert single["documents"][0]["file"] == "api.md"
+    multiple = readers.other_read(source_id="docs_a")
+    assert multiple["documents"][0]["match_count"] == 3
+    assert "logo.png" in multiple["documents"][0]["matches"]
+    binary = readers.other_read(query="logo", source_id="docs_a")
+    assert binary["documents"][0]["binary"] is True
+    assert "content" not in binary["documents"][0]
+    keyword = readers.other_read(query="api", keyword="dispatch", source_id="docs_a")
+    assert "GET /dispatch 调度接口" in keyword["documents"][0]["content"]
+    assert "GET /orders 查询订单" not in keyword["documents"][0]["content"]
+    assert (api_doc / "logo.png").exists()
+
+
+def test_other_read_single_file_source_and_cross_source_isolation(project_config, other_sources):
+    readers = SourceReaders(project_config)
+    exported = readers.other_read(source_id="docs_b")
+    assert exported["status"] == "OK"
+    assert "order_id,status" in exported["documents"][0]["content"]
+    wrong = readers.other_read(source_id="docs_b", file="api.md")
+    assert wrong["status"] == "UNAVAILABLE"
+    assert "observability_gap" in wrong["error"]
+    both = readers.other_read()
+    assert {row["source_id"] for row in both["documents"]} == {"docs_a", "docs_b"}
+
+
+def test_other_read_reports_gap_for_unknown_source_or_missing_file(project_config):
+    readers = SourceReaders(project_config)
+    assert readers.other_read(source_id="missing")["status"] == "UNAVAILABLE"
+    project_config.sources.other.append(OtherSourceConfig(id="docs", description="d", path="Z:/definitely/not/here"))
+    missing = readers.other_read(source_id="docs")
+    assert missing["status"] == "UNAVAILABLE"
+    assert missing["sources"][0]["status"] == "UNAVAILABLE"
+
+
+def test_other_source_rejects_relative_path_and_duplicates(project_config):
+    with pytest.raises(ValidationError):
+        OtherSourceConfig(id="rel", description="d", path="docs/api.md")
+    with pytest.raises(ValidationError, match="ID 重复"):
+        SourcesConfig(code=[{"id": "x", "description": "c", "path": str(Path(project_config.sources.code[0].path))}],
+                      other=[{"id": "X", "description": "o", "path": str(Path(project_config.sources.code[0].path))}])
+
+
 def test_chat_and_harness_use_same_multi_source_adapters(project_config):
     from iro_agent.cli import init_agent_engine
     for source in project_config.sources.code:
@@ -212,7 +276,7 @@ def test_chat_and_harness_use_same_multi_source_adapters(project_config):
     assert "code_b" in harness.tool_registry.get_prompt_description()
     assert "source-secret" not in harness.tool_registry.get_prompt_description()
     for schema in client.tools_schema:
-        if schema["function"]["name"] in {"code_search", "db_query", "log_search", "web_fetch"}:
+        if schema["function"]["name"] in {"code_search", "db_query", "log_search", "web_fetch", "other_read"}:
             assert "source_id" in schema["function"]["parameters"]["properties"]
 
 

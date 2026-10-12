@@ -142,6 +142,10 @@ class InvestigationHarness:
         def web_fetch_adapter(url: str = "", **kwargs):
             return readers.web_fetch(url=url, **kwargs)
 
+        def other_read_adapter(query: str = "", file: str = "", **kwargs):
+            return readers.other_read(query=query, file=file, source_id=kwargs.get("source_id"),
+                                      keyword=kwargs.get("keyword"))
+
         def plc_read_adapter(address: str = "", register: str = "", **kwargs):
             return {
                 "status": "UNAVAILABLE",
@@ -166,6 +170,7 @@ class InvestigationHarness:
             "code_search": code_search_adapter,
             "version_current": version_current_adapter,
             "web_fetch": web_fetch_adapter,
+            "other_read": other_read_adapter,
             "plc_read": plc_read_adapter,
             "robot_query": robot_query_adapter,
         }

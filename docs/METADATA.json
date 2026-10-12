@@ -1,0 +1,86 @@
+{
+  "@context": "https://schema.org",
+  "@type": ["SoftwareSourceCode", "SoftwareApplication"],
+  "@id": "https://github.com/lx00018310/IRO_agent",
+  "name": "IRO_agent",
+  "alternateName": "Industrial Read-Only Agent",
+  "headline": "Evidence-driven, strictly read-only diagnostic AI agent for industrial software systems",
+  "description": "IRO_agent (Industrial Read-Only Agent) is an evidence-driven, strictly read-only diagnostic AI agent for industrial software systems. It learns a project's operational model, investigates incidents through iterative evidence gathering, and scores the quality of its own diagnosis using reproducible evaluation datasets. It runs three closed-loop harnesses: Project Learning (builds what the system is), Investigation (finds what actually went wrong via per-round re-planning), and Evaluation (grades the diagnosis itself).",
+  "abstract": "Industrial diagnostic AI agent with strict read-only safety, evidence provenance, per-round dynamic re-planning, competing-hypothesis lifecycle, knowledge modeling of unknowns, and reproducible evaluation grading.",
+  "version": "0.1.0",
+  "programmingLanguage": ["Python"],
+  "runtimePlatform": "Python >= 3.10",
+  "license": "https://opensource.org/licenses/MIT",
+  "codeRepository": "https://github.com/lx00018310/IRO_agent",
+  "applicationCategory": [
+    "Industrial Diagnostics",
+    "Site Reliability Engineering",
+    "Incident Investigation",
+    "AI Agent",
+    "Root Cause Analysis"
+  ],
+  "operatingSystem": "Windows, Linux (on-premise and air-gapped industrial PCs)",
+  "keywords": [
+    "industrial diagnostics",
+    "incident investigation",
+    "root cause analysis",
+    "evidence-driven agent",
+    "read-only agent",
+    "AI agent harness",
+    "large language model",
+    "site reliability",
+    "observability",
+    "agentic investigation",
+    "project knowledge bootstrap",
+    "diagnosis evaluation"
+  ],
+  "about": {
+    "role": "Diagnoses incidents in industrial software systems such as scheduling/dispatcher systems (e.g. WES), PostgreSQL-backed business databases, service logs, and dynamic web pages (DevExpress Blazor Server, Vue, React, ASP.NET WebForms).",
+    "safetyBoundary": "Strict read-only: no file writes, no Git commits, no business-database writes, no arbitrary shell execution against the diagnosed system.",
+    "evidenceModel": "Every claim must be anchored to a concrete log line, configuration key, or database record."
+  },
+  "featureList": [
+    "Strict Read-Only safety hard-gate",
+    "Evidence provenance (no evidence, no claim)",
+    "Per-round dynamic re-planning engine",
+    "Competing-hypothesis lifecycle (2-5 hypotheses: add, edit, merge, discard)",
+    "Observability-gap awareness (OBSERVABILITY_GAP classification)",
+    "KnowledgeUnknown first-class objects for blind spots and uncertainty",
+    "10-dimension project knowledge coverage tracking",
+    "Anti-pollution memory (prior_bias_only)",
+    "Layered deterministic graders (deterministic, evidence-grounding, safety, path-quality)",
+    "DEV / REGRESSION / BLIND dataset layering for reproducible evaluation"
+  ],
+  "entryPoint": "python -m iro_agent.cli",
+  "packageName": "iro-agent",
+  "testStatus": "267 tests passing",
+  "audience": {
+    "@type": "Audience",
+    "audienceType": [
+      "Plant and operations engineers",
+      "Industrial software maintainers (WES, ERP, backend services)",
+      "On-premise / air-gapped deployment teams",
+      "QA and reliability engineering teams"
+    ]
+  },
+  "github": {
+    "about": "Evidence-driven, strictly read-only diagnostic AI agent for industrial software systems — Project Learning + Investigation + Evaluation harnesses.",
+    "topics": [
+      "ai-agent",
+      "industrial-diagnostics",
+      "incident-investigation",
+      "root-cause-analysis",
+      "evidence-driven",
+      "reasoning-agent",
+      "read-only",
+      "llm",
+      "large-language-models",
+      "observability",
+      "site-reliability",
+      "agentic",
+      "diagnosis",
+      "automation",
+      "python"
+    ]
+  }
+}

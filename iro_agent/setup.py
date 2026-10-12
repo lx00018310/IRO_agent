@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from iro_agent.config import (
     DatabaseSourceConfig, DirectorySourceConfig, HttpSourceConfig, IROConfig,
-    SetupState, SourcesConfig, read_config_data,
+    OtherSourceConfig, SetupState, SourcesConfig, read_config_data,
 )
 
 
@@ -36,12 +36,12 @@ def configuration_errors(config: IROConfig) -> list[str]:
         errors.append("项目工作目录不存在")
     if config.wrelease_dir and not Path(config.wrelease_dir).is_dir():
         errors.append("WRelease 目录不存在")
-    if config.sources is None or not any(getattr(config.sources, k) for k in ("code", "logs", "databases", "http")):
+    if config.sources is None or not any(getattr(config.sources, k) for k in ("code", "logs", "databases", "http", "other")):
         errors.append("至少需要一个数据来源")
     elif config.sources is not None:
-        for source in config.sources.code + config.sources.logs:
-            if not Path(source.path).is_absolute() or not Path(source.path).is_dir():
-                errors.append(f"来源 {source.id} 必须是存在的绝对目录路径")
+        for source in config.sources.code + config.sources.logs + config.sources.other:
+            if not Path(source.path).is_absolute() or not (Path(source.path).is_dir() or Path(source.path).is_file()):
+                errors.append(f"来源 {source.id} 必须是存在的绝对目录或文件路径")
     return errors
 
 
@@ -121,6 +121,14 @@ class SetupWizard:
                 return path.as_posix()
             self.print("目录不存在，请重新输入；可粘贴带引号的 Windows 路径。")
 
+    def other_path(self):
+        while True:
+            raw = self.ask("资料路径（目录或单个文件）").strip('"\'')
+            path = Path(raw).expanduser().resolve()
+            if path.is_dir() or path.is_file():
+                return path.as_posix()
+            self.print("路径不存在，请重新输入；可粘贴带引号的 Windows 路径。")
+
     def secret_value(self, prompt, current=""):
         value = self.secret(prompt + ("（回车保留，- 清空）: " if current else "（不回显，回车跳过）: "))
         if value.lower() in ("q", "quit", "exit"):
@@ -129,7 +137,7 @@ class SetupWizard:
 
     @staticmethod
     def import_legacy(config):
-        sources = {kind: [] for kind in ("code", "logs", "databases", "http")}
+        sources = {kind: [] for kind in ("code", "logs", "databases", "http", "other")}
         if config.project_root:
             sources["code"].append({"id": "code-1", "description": "原项目代码", "path": config.project_root})
         for index, path in enumerate(dict.fromkeys(config.log_dirs), 1):
@@ -140,9 +148,9 @@ class SetupWizard:
         return SourcesConfig(**sources)
 
     def add_source(self, sources, kind):
-        all_ids = {s.id.lower() for k in ("code", "logs", "databases", "http") for s in getattr(sources, k)}
+        all_ids = {s.id.lower() for k in ("code", "logs", "databases", "http", "other") for s in getattr(sources, k)}
         index = 1
-        prefix = {"code": "code", "logs": "logs", "databases": "db", "http": "http"}[kind]
+        prefix = {"code": "code", "logs": "logs", "databases": "db", "http": "http", "other": "other"}[kind]
         while f"{prefix}-{index}" in all_ids:
             index += 1
         data = {"id": self.ask("来源 ID（字母开头，字母/数字/-/_）", f"{prefix}-{index}", True),
@@ -158,6 +166,10 @@ class SetupWizard:
             if not data["password_env"]:
                 data["password"] = self.secret_value("数据库密码")
             model = DatabaseSourceConfig
+        elif kind == "other":
+            self.print("登记任意本地只读资料：API/接口文档、数据字典、说明文件、导出的 JSON/CSV 等。")
+            data["path"] = self.other_path()
+            model = OtherSourceConfig
         else:
             self.print("登记完整的只读 GET 端点；只允许这个精确 URL，不跟随重定向。")
             data["url"] = self.ask("完整 HTTP/HTTPS URL", required=True)
@@ -173,24 +185,24 @@ class SetupWizard:
 
     def manage_sources(self, sources):
         while True:
-            self.print("\n来源管理：1 添加代码目录；2 添加数据库；3 添加日志目录；4 添加 HTTP 接口；5 删除来源；6 查看；0 下一步")
-            self.print("当前来源：" + ", ".join(s.id for k in ("code", "databases", "logs", "http") for s in getattr(sources, k)))
+            self.print("\n来源管理：1 添加代码目录；2 添加数据库；3 添加日志目录；4 添加 HTTP 接口；5 添加其他资料（文档/导出文件等）；6 删除来源；7 查看；0 下一步")
+            self.print("当前来源：" + ", ".join(s.id for k in ("code", "databases", "logs", "http", "other") for s in getattr(sources, k)))
             choice = self.ask("选择", "0")
             if choice == "0":
-                if not any(getattr(sources, k) for k in ("code", "logs", "databases", "http")):
+                if not any(getattr(sources, k) for k in ("code", "logs", "databases", "http", "other")):
                     self.print("至少添加一个来源后才能继续。")
                     continue
                 return sources
             try:
-                if choice in ("1", "2", "3", "4"):
-                    sources = self.add_source(sources, {"1": "code", "2": "databases", "3": "logs", "4": "http"}[choice])
-                elif choice == "5":
+                if choice in ("1", "2", "3", "4", "5"):
+                    sources = self.add_source(sources, {"1": "code", "2": "databases", "3": "logs", "4": "http", "5": "other"}[choice])
+                elif choice == "6":
                     source_id = self.ask("要删除的来源 ID", required=True)
                     updated = sources.model_dump()
                     found = any(s["id"] == source_id for items in updated.values() for s in items)
                     sources = SourcesConfig(**{k: [s for s in items if s["id"] != source_id] for k, items in updated.items()})
                     self.print("已删除。" if found else "未找到该来源。")
-                elif choice == "6":
+                elif choice == "7":
                     self.print(json.dumps(masked_config(sources.model_dump()), indent=2, ensure_ascii=False))
                 else:
                     self.print("请输入菜单中的编号。")
@@ -212,7 +224,7 @@ class SetupWizard:
         config.project_root = self.directory("项目工作目录（存放 .iro_agent 认知缓存）", config.project_root or str(self.path.parent))
         config.wrelease_dir = self.directory("WRelease 交付目录（可跳过）", config.wrelease_dir, False)
 
-        self.print("\n[2/4] 添加同一个项目的多个来源；不需要的类型可以跳过。")
+        self.print("\n[2/4] 添加同一个项目的多个来源；不需要的类型可以跳过（其他资料可放 API 文档、导出文件等）。")
         while True:
             config.sources = self.manage_sources(sources)
             errors = configuration_errors(config)

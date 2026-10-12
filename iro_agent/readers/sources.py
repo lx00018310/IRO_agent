@@ -14,6 +14,35 @@ from iro_agent.readers.log_reader import LogReader
 from iro_agent.security.audit import AuditLogger
 from iro_agent.security.redactor import redact_secrets
 
+# Read-only text formats accepted by other_read; binaries are listed but never decoded.
+OTHER_TEXT_SUFFIXES = {
+    ".md", ".markdown", ".txt", ".rst", ".log", ".json", ".jsonl", ".ndjson", ".geojson",
+    ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".properties", ".env",
+    ".xml", ".html", ".htm", ".svg", ".css",
+    ".csv", ".tsv", ".psv",
+    ".sql", ".graphql", ".proto", ".openapi", ".swagger",
+    ".py", ".js", ".ts", ".jsx", ".tsx", ".vue", ".java", ".kt", ".go", ".rs", ".c", ".h",
+    ".cs", ".cpp", ".hpp", ".sh", ".bat", ".ps1", ".lua", ".rb", ".php", ".ipynb",
+    ".pdf.name-only",
+}
+OTHER_MAX_BYTES = 2_000_000
+OTHER_MAX_ENTRIES = 500
+
+
+def is_other_text_file(path: Path) -> bool:
+    if path.suffix.lower() in {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".zip",
+                               ".gz", ".tar", ".7z", ".rar", ".png", ".jpg", ".jpeg", ".gif", ".bmp",
+                               ".webp", ".ico", ".exe", ".dll", ".so", ".dylib", ".jar", ".class",
+                               ".bin", ".dat", ".db", ".sqlite", ".sqlite3", ".woff", ".woff2", ".ttf", ".otf"}:
+        return False
+    if path.suffix.lower() in OTHER_TEXT_SUFFIXES:
+        return True
+    try:
+        with path.open("rb") as stream:
+            return b"\x00" not in stream.read(4096)
+    except OSError:
+        return False
+
 
 def summarize_source_output(value, preview_chars=1200):
     """Bound data per source, preserving every source's identity and availability."""
@@ -47,13 +76,15 @@ class SourceReaders:
         if sources is None:
             return {"project": self.config.project_name, "status": "SETUP_REQUIRED", "sources": []}
         items = []
-        for kind in ("code", "logs", "databases", "http"):
+        for kind in ("code", "logs", "databases", "http", "other"):
             for source in getattr(sources, kind):
                 item = {"source_id": source.id, "kind": kind, "description": source.description}
                 if kind in ("code", "logs"):
                     item["path"] = source.path
                 elif kind == "databases":
                     item.update(host=source.host, port=source.port, database=source.database)
+                elif kind == "other":
+                    item["path"] = source.path
                 else:
                     item["url"] = source.url
                 items.append(item)
@@ -119,6 +150,53 @@ class SourceReaders:
             raise FileNotFoundError(f"来源目录不存在: {path}")
         with os.scandir(path):
             pass
+
+    def _other_file_content(self, path: Path, keyword: Optional[str], max_chars: int) -> dict:
+        if not is_other_text_file(path):
+            return {"file": path.name, "binary": True,
+                    "message": "二进制/文档文件仅列出位置，不做内容读取；如需检索请先导出为文本格式"}
+        size = path.stat().st_size
+        with path.open("r", encoding="utf-8", errors="replace") as stream:
+            content = stream.read(OTHER_MAX_BYTES)
+        if keyword:
+            content = "\n".join(line for line in content.splitlines() if keyword.lower() in line.lower())
+        return {"file": path.name, "size_bytes": size, "content": content[:max_chars],
+                "truncated": len(content) > max_chars or size > OTHER_MAX_BYTES}
+
+    def other_read(self, query: str = "", keyword: Optional[str] = None, file: str = "",
+                   max_chars: int = 6000, source_id: Optional[str] = None, **kwargs):
+        """Read registered arbitrary materials: list a directory or read one text file per source."""
+        if not isinstance(max_chars, int) or not 1 <= max_chars <= 50000:
+            raise ValueError("max_chars 必须是 1 到 50000 的整数")
+        if self.config.sources is None:
+            return {"status": "UNAVAILABLE", "error": "observability_gap: 当前为旧版单一来源配置，无其他资料来源"}
+        target = (file or query or "").strip()
+        if kwargs:
+            return {"error": "其他资料来源只接受 query/keyword/file/max_chars/source_id 参数"}
+
+        def read(source):
+            root = Path(source.path)
+            if root.is_file():
+                if target and target != root.name:
+                    raise FileNotFoundError(f"来源是单文件 {root.name}，找不到文件: {target}")
+                return [self._other_file_content(root, keyword, max_chars)]
+
+            def visible(path: Path) -> bool:
+                return path.is_file() and not path.name.startswith(".") \
+                    and "__pycache__" not in path.parts and "node_modules" not in path.parts
+            files = sorted(p for p in root.rglob("*") if visible(p))[:OTHER_MAX_ENTRIES]
+            matches = [p for p in files
+                       if not target or target.lower() in p.name.lower()
+                       or target in p.relative_to(root).as_posix()]
+            if not matches:
+                listing = [p.relative_to(root).as_posix() for p in files]
+                raise FileNotFoundError(f"未找到匹配 '{target}' 的文件；可用文件: {', '.join(listing[:50])}")
+            if len(matches) == 1:
+                return [self._other_file_content(matches[0], keyword, max_chars)]
+            return {"matches": [p.relative_to(root).as_posix() for p in matches[:100]],
+                     "match_count": len(matches),
+                     "hint": "多个文件匹配；请用 file 参数提供更完整的文件名或相对路径"}
+        return self._collect("other", source_id, "documents", read)
 
     def code_search(self, query: str, source_id: Optional[str] = None, max_results: int = 50, **kwargs):
         if self.config.sources is None:
@@ -214,13 +292,20 @@ class SourceReaders:
         groups = []
         if self.config.sources is None:
             return [{"status": "SETUP_REQUIRED"}]
-        for kind in ("code", "logs", "databases", "http"):
+        for kind in ("code", "logs", "databases", "http", "other"):
             for source in getattr(self.config.sources, kind):
                 try:
                     if kind in ("code", "logs"):
                         self._require_directory(source.path)
                     elif kind == "databases":
                         self._database(source).execute_query(query="SELECT 1 AS alive", max_rows=1)
+                    elif kind == "other":
+                        root = Path(source.path)
+                        if not (root.is_dir() or root.is_file()):
+                            raise FileNotFoundError(f"来源路径不存在: {root}")
+                        if root.is_dir():
+                            with os.scandir(root):
+                                pass
                     else:
                         self._http_get(source, max_chars=100)
                     groups.append({"source_id": source.id, "status": "OK"})
@@ -232,4 +317,5 @@ class SourceReaders:
         return {"sources_list": self.inventory, "code_search": self.code_search,
                 "log_search": self.log_search, "db_query": self.db_query,
                 "db_describe": self.db_describe, "db_describe_table": self.db_describe,
-                "db_list_tables": self.db_list_tables, "web_fetch": self.web_fetch}
+                "db_list_tables": self.db_list_tables, "web_fetch": self.web_fetch,
+                "other_read": self.other_read}

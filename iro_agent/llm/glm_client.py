@@ -271,13 +271,30 @@ class GlmClient:
                     },
                 },
             },
+            {
+                "type": "function",
+                "function": {
+                    "name": "other_read",
+                    "description": "只读查看当前项目登记的其他资料来源（API/接口文档、数据字典、导出的 JSON/CSV 等本地文本文件）。单文件来源直接读取内容；目录来源先用 query/file 匹配文件名，多个匹配时返回清单。可用 sources_list 查看来源 ID。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "目标文件名或相对路径关键词"},
+                            "keyword": {"type": "string", "description": "可选按行过滤内容的关键词"},
+                            "file": {"type": "string", "description": "可选，目标文件名或相对路径"},
+                            "max_chars": {"type": "integer", "description": "最多返回字符数，默认 6000"},
+                        },
+                        "required": [],
+                    },
+                },
+            },
         ]
         schema.append({"type": "function", "function": {
             "name": "sources_list", "description": "列出当前项目的所有来源 ID、类型、用途和位置；不含凭据",
             "parameters": {"type": "object", "properties": {}},
         }})
         for tool in schema:
-            if tool["function"]["name"] in {"log_search", "code_search", "db_query", "db_list_tables", "db_describe_table", "web_fetch"}:
+            if tool["function"]["name"] in {"log_search", "code_search", "db_query", "db_list_tables", "db_describe_table", "web_fetch", "other_read"}:
                 tool["function"]["parameters"]["properties"]["source_id"] = {
                     "type": "string", "description": "可选来源 ID，省略时分别读取该类所有来源；结果保留来源标识",
                 }

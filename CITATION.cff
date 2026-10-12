@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata from this file."
+type: software
+title: "IRO_agent (Industrial Read-Only Agent)"
+abstract: "Evidence-driven, strictly read-only diagnostic AI agent for industrial software systems. It learns a project's operational model, investigates incidents through iterative evidence gathering, and scores its own diagnosis quality using reproducible evaluation datasets."
+version: 0.1.0
+license: MIT
+repository-code: "https://github.com/lx00018310/IRO_agent"
+keywords:
+  - industrial diagnostics
+  - incident investigation
+  - root cause analysis
+  - evidence-driven agent
+  - read-only
+  - artificial intelligence
+  - ai agent
+  - large language model
+  - observability
+  - site reliability
+authors:
+  - name: "IRO_agent Contributors"

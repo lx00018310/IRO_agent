@@ -1,86 +1,136 @@
-# IRO_agent (Industrial Read-Only Agent)
+# IRO_agent — Industrial Read-Only Agent
 
-> **IRO_agent is an evidence-driven industrial diagnosis harness.**  
-> It learns a project's operational model, investigates incidents through iterative evidence gathering, and evaluates its own diagnosis quality through reproducible datasets.
+> **English** · [中文文档](readme_cn.md)
 
-[![Tests](https://img.shields.io/badge/tests-267%20passed-brightgreen.svg)]()
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)]()
+> **IRO_agent is an evidence-driven, strictly read-only diagnostic AI agent for industrial software systems.** It learns a project's operational model, investigates incidents through iterative evidence gathering, and scores the quality of its own diagnosis using reproducible evaluation datasets.
+
+[![Tests](https://img.shields.io/badge/tests-272%20passed-brightgreen.svg)]()
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Security](https://img.shields.io/badge/boundary-Strict%20Read--Only-red.svg)]()
 
 ---
 
-## 核心设计理念
+## What is IRO_agent?
 
-工业现场诊断与常规对话 Agent 有根本不同：工业排查面临高并发日志噪声、用户主观误导、时序巧合与物理断电断网等反直觉场景。IRO_agent 放弃了传统的“一次性固定步骤排查”，演进为三大工业级 Harness 闭环系统：
+**IRO_agent** (Industrial Read-Only Agent) is an AI agent harness for diagnosing incidents in industrial software systems — such as scheduling systems, production databases, and service logs. Unlike a general-purpose chat assistant, it never reasons from fixed, one-shot steps. Instead, it runs three closed-loop, industrial-grade **harnesses** that work together:
 
-```text
-┌────────────────────────────────────────────────────────────────────────┐
-│                        IRO_agent 三大核心 Harness                       │
-├────────────────────────┬───────────────────────┬───────────────────────┤
-│ Project Learning       │ Investigation         │ Evaluation            │
-│ Harness                │ Harness               │ Harness               │
-├────────────────────────┼───────────────────────┼───────────────────────┤
-│ • Unknown 一等对象     │ • 逐轮动态重规划      │ • 生产同构 Dispatcher │
-│ • 10 维知识覆盖度跟踪  │ • 假设全生命周期状态机│ • 确定性 Grader       │
-│ • 多轮迭代代码精读     │ • 事实与因果解耦抽取  │ • 证据锚定度评分      │
-│ • 置信度校准与防污染   │ • 只读工具安全硬门槛  │ • DEV / REGRESSION 库 │
-└────────────────────────┴───────────────────────┴───────────────────────┘
-```
+- **Project Learning Harness** — builds a model of *what the system actually is*.
+- **Investigation Harness** — gathers evidence and re-plans every round to find *what actually went wrong*.
+- **Evaluation Harness** — grades the diagnosis itself so that quality is *measurable and reproducible*.
 
-1. **绝对只读安全硬防御 (Strict Read-Only)**：对被诊断系统不写文件、不提交 Git、不写业务数据库；诊断工具不提供任意 Shell 执行能力。配置向导仅保存 IRO 自身配置，内部审计、记忆和认知缓存仍由 IRO 管理。双层只读拦截与脱敏审计，严守生产安全底线。
-2. **严禁无据断言 (Evidence Provenance)**：所有推断均需绑定具体的日志行、配置键或数据库记录，禁止凭空猜测。
-3. **真实物理与数字边界划分**：数字观测充分无异常时，支持合法的现场物理排查升级，避免将观测缺口盲目定性为硬件故障。
+Every finding must be anchored to concrete evidence (a log line, a configuration key, a database row), and every tool is **strictly read-only** against the system being diagnosed.
+
+| Quick fact | Value |
+| :--- | :--- |
+| **What it is** | An evidence-driven, strictly read-only industrial diagnostic agent |
+| **Category** | AI agent / industrial diagnostics / site reliability / incident investigation |
+| **Package name** | `iro-agent` (installable via `pip install -e .`) |
+| **Entry point** | `python -m iro_agent.cli` |
+| **Python** | `>= 3.10` |
+| **License** | MIT |
+| **Safety boundary** | Strict read-only — no file writes, no Git commits, no business-database writes, no arbitrary shell |
 
 ---
 
-## 核心子系统架构
+## Who is it for?
 
-### 1. Investigation Harness (逐轮动态重规划排查系统)
-- **统一运行时分发器 (`RuntimeDispatcher`)**：飞书网关、CLI 诊断会话、直接排查命令与基准评测全面归一，故障强制接入 Harness。
-- **逐轮重规划引擎 (`LLMInvestigationPlanner`)**：每轮基于最新动态证据重新调用大模型决策，严禁固定步骤单向流。
-- **权限与 Schema 硬防线 (`PlannerValidator`)**：严格校验 JSON Schema、工具只读白名单、入参模型与步数预算，非法操作物理阻断。
-- **竞争假设生命周期 (`HypothesisManager`)**：支持 2~5 个假设的首轮推演生成及后续增、删、改、并、弃全生命周期流转。
-- **事实与因果解耦 (`EvidenceEvaluator`)**：区分证据事实抽取与根因推断，超时与断连准确识别为 `OBSERVABILITY_GAP`。
+IRO_agent is designed for teams operating industrial and on-premise software in production:
 
-### 2. Project Learning Harness (项目认知学习系统)
-- **Unknown 一等对象 (`KnowledgeUnknown`)**：显式建模业务流盲区、硬件交互不确定性及配置差异。
-- **多维覆盖度量 (`LearningState`)**：涵盖架构、模块、业务流、状态机、数据库黄金源等 10 个维度，依据覆盖度收益与优先级自主推进。
-- **防污染记忆机制**：历史经验严格作为先验参考 (`prior_bias_only`)，严禁直接作为当前根因凭证。
-
-### 3. Evaluation Harness (客观评测体系)
-- **多维评测指标**：涵盖 Case 通过率、根因准确率、证据锚定得分、路径质量与安全违规监控。
-- **分层 Grader 体系**：
-  - `DeterministicGrader`：严格校验根因分类、责任边界与关键关键词。
-  - `EvidenceGroundingGrader`：核验所有结论主张与真实工具观测记录的溯源关系。
-  - `SafetyGrader`：检测任何写操作企图、破坏性指令与敏感数据泄露。
-  - `PathQualityGrader`：评估探索效率，检测死循环与无效试探。
-- **严格防作弊规范**：详见 [docs/evaluation_policy.md](docs/evaluation_policy.md)。严禁读取 ground truth、严禁 Prompt 特判、严禁评测模式隐式兜底刷分。
+- **Plant / operations engineers** who need to triage scheduling systems, databases, and service logs under noisy, high-concurrency conditions.
+- **Industrial software maintainers** working on scheduling dispatchers (e.g. WES), ERP/backend services, and machine or device data flows.
+- **On-premise / air-gapped deployments** where the environment may lack standard Python tooling (a single-file `uv.exe` path is provided).
+- **QA and reliability teams** who need a reproducible, evidence-anchored way to evaluate diagnostic quality.
 
 ---
 
-## 数据集分层规范
+## Key capabilities
 
-| 数据集 | 目录 | 用途与说明 |
+- **Strict Read-Only safety** — no writes, Git commits, business-database writes, or arbitrary shell execution against the diagnosed system.
+- **Evidence provenance** — every inference must be bound to a specific log line, config key, or database record; guessing is prohibited.
+- **Per-round dynamic re-planning** — each investigation round re-decides the next action based on the latest evidence instead of following a fixed script.
+- **Competing-hypothesis lifecycle** — 2–5 hypotheses are generated, then added, refined, merged, or discarded across the investigation.
+- **Observability-gap awareness** — timeouts and disconnections are correctly classified as `OBSERVABILITY_GAP` rather than mislabeled as a hardware fault.
+- **Knowledge modeling of unknowns** — business-flow blind spots, hardware-interaction uncertainty, and config drift are modeled as first-class `KnowledgeUnknown` objects.
+- **Reproducible evaluation** — deterministic, evidence-grounding, safety, and path-quality graders rate each diagnosis in an objective way.
+
+---
+
+## How it works
+
+| Project Learning Harness | Investigation Harness | Evaluation Harness |
 | :--- | :--- | :--- |
-| **DEV Dataset** | `evaluation_cases/dev/` | 面向算法开发和 AI 提示工程迭代，包含 20+ 工业真实场景与边界案例。 |
-| **REGRESSION Dataset** | `evaluation_cases/regression/` | 质量守门集，包含反直觉 5 大 Case、安全防御以及历史缺陷案例。 |
-| **BLIND Dataset** | 外部私有目录（严禁入库） | 生产级盲测集，开发阶段完全不可见，用于最终准入准出验证。 |
+| • `Unknown` as a first-class object | • Per-round dynamic re-planning | • Production-identical dispatcher |
+| • 10-dimension coverage tracking | • Competing-hypothesis lifecycle state machine | • Deterministic graders |
+| • Multi-round iterative code reading | • Fact vs. cause decoupling | • Evidence-anchoring scoring |
+| • Confidence calibration & anti-pollution | • Read-only tool hard-gate | • DEV / REGRESSION datasets |
+
+1. **Learn** — the Project Learning Harness bootstraps a project model from source code, config, database schema, and logs.
+2. **Investigate** — the Investigation Harness gathers evidence round by round, tests competing hypotheses, and pinpoints the root cause.
+3. **Evaluate** — the Evaluation Harness replays every diagnosis and grades it with objective, deterministic graders.
 
 ---
 
-## 快速上手与部署指引
+## Core design principles
 
-### 1. 安装与依赖
+Industrial diagnosis is fundamentally different from ordinary conversational assistants: industrial triage faces high-concurrency log noise, subjective user misdirection, timing coincidences, and counter-intuitive scenarios such as physical power loss or network disconnects. IRO_agent abandons the traditional "one-shot fixed-step checklist" and instead evolves into three closed-loop harnesses:
 
-根据现场工控机环境选择以下方式之一：
+1. **Strict Read-Only safety hard-gate** — the diagnosed system is never written to, never committed via Git, and never written to business databases; diagnostic tools provide no arbitrary shell execution. The configuration wizard only saves IRO's own configuration, while internal auditing, memory, and cognitive cache remain managed by IRO. Dual-layer read-only interception plus redacted auditing keeps the production safety baseline intact.
+2. **Evidence provenance (no evidence, no claim)** — every inference must be anchored to a concrete log line, configuration key, or database record; speculation without basis is forbidden.
+3. **Physical vs. digital boundary** — when digital observation is sufficient and shows no anomaly, a legitimate on-site physical escalation is supported, avoiding the trap of blindly labeling an observation gap as a hardware fault.
 
-#### 方式 A：原生 Python（适用于已安装标准 Python 的环境）
+---
+
+## Core subsystem architecture
+
+### 1. Investigation Harness (per-round dynamic re-planning)
+
+- **Unified runtime dispatcher (`RuntimeDispatcher`)** — normalizes the Feishu gateway, CLI diagnostic sessions, direct investigation commands, and benchmark evaluation so that any fault is forced through the Harness.
+- **Per-round re-planning engine (`LLMInvestigationPlanner`)** — re-invokes the LLM each round based on the latest dynamic evidence; a fixed one-way step flow is prohibited.
+- **Permission & schema hard-gate (`PlannerValidator`)** — strictly validates the JSON schema, the read-only tool allow-list, the input models, and the step budget; illegal operations are physically blocked.
+- **Competing-hypothesis lifecycle (`HypothesisManager`)** — supports first-round generation of 2–5 hypotheses and the full lifecycle of adding, deleting, editing, merging, and discarding them.
+- **Fact vs. cause decoupling (`EvidenceEvaluator`)** — separates evidence fact extraction from root-cause inference; timeouts and disconnects are correctly identified as `OBSERVABILITY_GAP`.
+
+### 2. Project Learning Harness
+
+- **`Unknown` as a first-class object (`KnowledgeUnknown`)** — explicitly models business-flow blind spots, hardware-interaction uncertainty, and configuration differences.
+- **Multi-dimensional coverage (`LearningState`)** — spans 10 dimensions including architecture, modules, business flows, state machines, and golden-source databases, and advances autonomously by coverage benefit and priority.
+- **Anti-pollution memory mechanism** — historical experience is strictly treated as a prior reference (`prior_bias_only`) and is forbidden from being used directly as current root-cause evidence.
+
+### 3. Evaluation Harness
+
+- **Multi-dimensional metrics** — case pass rate, root-cause accuracy, evidence-anchoring score, path quality, and safety-violation monitoring.
+- **Layered grader system**:
+  - `DeterministicGrader` — strictly verifies root-cause classification, responsibility boundaries, and key keywords.
+  - `EvidenceGroundingGrader` — verifies that every conclusion claim is traceable to real tool-observation records.
+  - `SafetyGrader` — detects any write attempt, destructive instruction, or sensitive-data leak.
+  - `PathQualityGrader` — evaluates exploration efficiency and detects dead loops and ineffective probes.
+- **Strict anti-cheat rules** — see [docs/evaluation_policy.md](docs/evaluation_policy.md). Reading ground truth, prompt special-casing, and implicit test-mode score padding are all prohibited.
+
+---
+
+## Dataset layering
+
+| Dataset | Directory | Purpose |
+| :--- | :--- | :--- |
+| **DEV Dataset** | `evaluation_cases/dev/` | For algorithm development and AI prompt engineering iteration; includes 20+ real industrial scenarios and edge cases. |
+| **REGRESSION Dataset** | `evaluation_cases/regression/` | Quality gate set; includes 5 counter-intuitive cases, safety defense, and historical-defect cases. |
+| **BLIND Dataset** | external private directory (may never be committed) | Production-grade blind test set, fully invisible during development, used for final admission/exit validation. |
+
+---
+
+## Quick start & deployment
+
+### 1. Installation & dependencies
+
+Choose one of the following based on the on-site industrial PC environment:
+
+#### Option A: native Python (for environments with standard Python installed)
 
 ```bash
-# 1. 创建虚拟环境 (推荐 Python 3.10+)
+# 1. Create a virtual environment (Python 3.10+ recommended)
 python -m venv .venv
 
-# 2. 激活虚拟环境
+# 2. Activate the virtual environment
 # Git Bash:
 source .venv/Scripts/activate
 # Windows PowerShell:
@@ -88,187 +138,225 @@ source .venv/Scripts/activate
 # Windows CMD:
 .venv\Scripts\activate.bat
 
-# 3. 安装项目依赖
+# 3. Install project dependencies
 pip install -e .
 ```
 
-#### 方式 B：单文件 `uv.exe`（推荐现场嵌入式精简 Python / 离线环境）
+#### Option B: single-file `uv.exe` (recommended for on-site embedded minimal Python / offline environments)
 
-> 工业现场若使用 `embed-amd64` 精简版 Python（默认缺失 `venv` 和 `pip` 模块），直接使用单文件免安装的 `uv.exe` 可规避 Python 环境缺失问题。
+> If the industrial site uses the `embed-amd64` minimal Python (which by default lacks the `venv` and `pip` modules), a single-file, installation-free `uv.exe` avoids the missing-Python-environment problem.
 
-- **联网工控机一键安装**：
+- **Online industrial PC, one-command install**:
   ```bash
-  # 下载并加入当前会话 PATH
+  # Download and add to the current session PATH
   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
   export PATH="$HOME/.local/bin:$PATH"
 
-  # 创建虚拟环境并安装依赖
+  # Create the virtual environment and install dependencies
   uv venv .venv
   source .venv/Scripts/activate
   uv pip install -e .
   ```
 
-- **离线内网工控机（直接拷贝单文件）**：
-  将外网下载的单个 [`uv.exe`](https://github.com/astral-sh/uv/releases) 复制到项目根目录下，直接执行：
+- **Offline intranet industrial PC (copy a single file directly)**:
+  Copy a single downloaded [`uv.exe`](https://github.com/astral-sh/uv/releases) to the project root, then run:
   ```bash
   ./uv.exe venv .venv
   source .venv/Scripts/activate
   ./uv.exe pip install -e .
   ```
 
-#### 动态网页探针内核安装 (用于 WES / 调度动态页面抓取)
+#### Dynamic web-probe kernel installation (for WES / dispatcher dynamic page scraping)
 
-若现场需要通过 `web_fetch` 抓取并排查调度系统网页（如 DevExpress Blazor Server、Vue、React、ASP.NET WebForms 等动态异步页面），Playwright 依赖独立的 Chromium 运行环境，需执行官方下载指令：
+If the site needs `web_fetch` to scrape and inspect dispatcher-system web pages (dynamic async pages such as DevExpress Blazor Server, Vue, React, ASP.NET WebForms), Playwright depends on a separate Chromium runtime and requires the official download command:
 
 ```bash
-# 下载并安装 Chromium 浏览器内核
+# Download and install the Chromium browser kernel
 playwright install chromium
 ```
 
 > [!TIP]
-> **内网/弱网加速下载**：若现场工控机访问海外源较慢，可在下载前指定国内镜像源：
+> **Intranet / weak-network download acceleration**: if the on-site PC accesses overseas sources slowly, you can point to a China mirror before downloading:
 > ```powershell
-> # Windows PowerShell 环境：
+> # Windows PowerShell:
 > $env:PLAYWRIGHT_DOWNLOAD_HOST="https://npmmirror.com/mirrors/playwright/"
 > playwright install chromium
 > ```
 
-### 2. 首次运行：必须完成项目配置向导
+### 2. First run: complete the project configuration wizard (required)
 
-一个 IRO_agent 实例只管理一个项目；同项目支持多个代码目录、PostgreSQL 数据库、日志目录和只读 HTTP 接口。无需先复制示例或手工编辑 JSON：
+One IRO_agent instance manages exactly one project; a project may span multiple code directories, PostgreSQL databases, log directories, read-only HTTP endpoints, and "other" material sources (any local read-only files or folders: API/interface documents, data dictionaries, exported JSON/CSV, READMEs, etc.). There is no need to copy a sample file or hand-edit JSON first:
 
 ```powershell
 python -m iro_agent.cli setup
 ```
 
-向导顺序：**项目及工作目录 → 添加多个来源 → 模型及可选飞书凭据 → 校验、脱敏摘要、确认保存**。在来源管理中可反复添加、删除、查看，每种类型都可以有多个来源；不需要的类型可跳过，至少保留一个来源。路径支持中文、空格及带引号的 Windows 路径。输入 `q` 或按 Ctrl+C 取消，`-` 清空可选项；完成前不会覆盖原配置。
+Wizard order: **project & working directory → add one or more sources → models and optional Feishu credentials → validation, redacted summary, confirm & save**. In source management you can repeatedly add, remove, and view sources; each type can have multiple sources; skip types you do not need, but keep at least one source. Paths may contain Chinese characters, spaces, and quoted Windows paths. Enter `q` or press Ctrl+C to cancel; use `-` to clear an optional item; the existing configuration is not overwritten until completion.
 
-未完成向导时，`init`、`chat`、`investigate`、`gateway start`、`eval` 都会阻断并返回非零退出码。`eval` 可能调用真实来源及模型，也需要完成配置。Windows 双击 `start_iro_agent.bat` 会先检查，未完成时自动进入向导。已有旧版 `config.json` 也需要执行一次 `setup`，旧源码、数据库、日志及凭据会导入供确认；当前用户配置不会在升级代码时被自动改写。
+Until the wizard is complete, `init`, `chat`, `investigate`, `gateway start`, and `eval` are all blocked and return a non-zero exit code. `eval` may invoke real sources and models and therefore also requires a completed configuration. Double-clicking `start_iro_agent.bat` on Windows checks first and automatically enters the wizard when not complete. An existing legacy `config.json` also requires running `setup` once; legacy source code, databases, logs, and credentials are imported for confirmation. The current user configuration is never rewritten automatically when the code is upgraded.
 
-以后追加或删除来源，重新运行 `setup` 即可。直接修改项目身份、来源位置或用途会使完成标记失效，必须重新走向导；密码及环境变量凭据值的轮换不改变来源身份。来源变化后旧认知蓝图停止用于查询，运行 `init` 重建即可。帮助、配置查看、自检、来源检查和离线测试（`pytest`）可在配置完成前使用。
+To add or remove sources later, simply run `setup` again. Directly modifying the project identity, source location, or purpose invalidates the completion marker and requires re-running the wizard; rotating passwords and environment-variable credential values does not change source identity. After a source changes, the old cognitive blueprint stops being used for queries — run `init` to rebuild. Help, configuration viewing, self-check, source inspection, and offline tests (`pytest`) are available before configuration is complete.
 
 ```powershell
-# 查看来源（不发起现场请求）
+# View sources (no live request is made)
 python -m iro_agent.cli sources
 
-# 显式检查所有来源：目录检查 / PostgreSQL SELECT 1 / HTTP GET
+# Explicitly check all sources: directory check / PostgreSQL SELECT 1 / HTTP GET
 python -m iro_agent.cli sources --check
 
-# 检查配置流程完成状态
+# Check the configuration-flow completion status
 python -m iro_agent.cli setup --check
 
-# 指定配置文件时，--config 放在命令前；一个进程只加载该文件对应的项目
-python -m iro_agent.cli --config D:/现场/IRO/config.json setup
+# When specifying a config file, put --config before the command; one process loads only the project of that file
+python -m iro_agent.cli --config D:/site/IRO/config.json setup
 ```
 
-配置文件默认是**当前目录**的 `config.json`；也可通过 `IRO_CONFIG_PATH` 指定。不会自动读取其他安装目录、旧项目或 `config.example.json`。示例文件仅用于说明配置结构，不代表已完成配置。
+The configuration file defaults to `config.json` in the **current directory**; it can also be set via `IRO_CONFIG_PATH`. It never auto-reads other installation directories, legacy projects, or `config.example.json`. The example file only documents the configuration structure and does not represent a completed configuration.
 
-数据库密码可以选择环境变量名或隐蔽输入后保存在本机配置中。HTTP 鉴权通过请求头环境变量配置，向导只保存变量名。例如 PowerShell 中：
+Database passwords can be selected as an environment-variable name or entered concealed and stored in the local configuration. HTTP authentication is configured via a request-header environment variable; the wizard saves only the variable name. For example, in PowerShell:
 
 ```powershell
-$env:IRO_GLM_API_KEY = "你的模型Key"
-$env:ORDERS_DB_PASSWORD = "只读数据库密码"
-$env:WES_AUTHORIZATION = "Bearer 你的令牌"
+$env:IRO_GLM_API_KEY = "your-model-key"
+$env:ORDERS_DB_PASSWORD = "read-only-db-password"
+$env:WES_AUTHORIZATION = "Bearer your-token"
 python -m iro_agent.cli setup
 ```
 
-在数据库来源里填写密码环境变量 `ORDERS_DB_PASSWORD`；在 HTTP 来源里添加请求头 `Authorization`，引用 `WES_AUTHORIZATION`。这些变量应在运行 IRO 的同一个进程环境中设置；临时 PowerShell 变量不会自动传给另一个双击启动的窗口。向导不会把环境变量的凭据值写入 JSON。模型 Key 可跳过以使用 `init --static-only`；在线问答和诊断仍需要有效模型凭据。
+For a database source, fill in the password environment variable `ORDERS_DB_PASSWORD`; for an HTTP source, add the request header `Authorization` referencing `WES_AUTHORIZATION`. These variables should be set in the same process environment that runs IRO; a temporary PowerShell variable is not automatically passed to another double-click-launched window. The wizard never writes environment-variable credential values into JSON. The model key can be skipped to use `init --static-only`; online Q&A and diagnosis still require valid model credentials.
 
-查询时模型会收到来源 ID、类型、用途和位置。代码、日志、数据库工具可用 `source_id` 精确选择来源；省略时分别读取该类所有来源，返回结果及失败项均保留来源 ID。例如可提问：“在所有代码目录中查找 dispatch”“分别查看业务库和调度库的任务状态”“只查询 db-wes 的任务表”。数据库只支持现有 PostgreSQL 驱动，跨库查询会分别执行 SQL，不支持跨数据库 SQL JOIN。版本工具继续以第一个代码来源为源码版本源，并保留可选 WRelease 交付版本源。
+At query time, the model receives the source ID, type, purpose, and location. Code, log, and database tools can select a source precisely by `source_id`; when omitted, they read all sources of that type, and both the returned results and failed items keep their source IDs. For example, you can ask: "search all code directories for 'dispatch'", "view the task status of the business DB and the scheduling DB separately", or "only query the task table in db-wes". The database supports only the existing PostgreSQL driver; cross-database queries execute the SQL separately and do not support cross-database SQL JOIN. The version tool continues to use the first code source as the source-for-version, and keeps an optional WRelease delivery-version source.
 
-HTTP 来源登记的是**精确的只读 GET 端点**，包括固定查询参数；不会接受其他 URL、动态追加路径、重定向、浏览器操作或表单登录。多个接口可逐个登记并统一读取。来源检查可在向导中显式跳过；检查失败时，只有明确选择保留才允许保存。运行时部分来源不可用会同时返回已有结果和观测缺口，不会被当作零记录或无异常；故障调查可指定可用来源进一步核实。
+HTTP sources register **exact read-only GET endpoints**, including fixed query parameters; other URLs, dynamically appended paths, redirects, browser operations, or form logins are not accepted. Multiple endpoints can be registered one by one and read uniformly. Source checks can be explicitly skipped in the wizard; when a check fails, saving is allowed only if you explicitly choose to keep it. At runtime, if some sources are unavailable, existing results and observation gaps are returned together rather than being treated as zero records or "no anomaly"; a fault investigation can specify available sources for further verification.
 
-### 3. 项目认知初始化 (Project Learning)
+"Other" sources accept any local absolute path to a folder or a single file (API/interface documents, data dictionaries, exported JSON/CSV, Markdown manuals, etc.). At query time the model uses the `other_read` tool: a single-file source is read directly; for a folder source it matches by file name/relative path (listing the candidates when several match), then reads the text content, optionally filtering lines by keyword. Binary and office files (PDF, Word, Excel, images, zip, etc.) are listed by location only and never decoded — export them as text (e.g. CSV/JSON/Markdown) if their content should be searchable. Like every other source, results keep their `source_id` and unavailable folders are reported as observation gaps.
+
+### 3. Project knowledge bootstrap (Project Learning)
+
 ```bash
-# 执行深度项目认知自举
+# Run deep project-knowledge bootstrap
 python -m iro_agent.cli init
 
-# 纯静态模式 (无需外部 LLM API)
+# Pure static mode (no external LLM API required)
 python -m iro_agent.cli init --static-only
 ```
 
-### 4. 交互式诊断与网关服务
+### 4. Interactive diagnosis & gateway service
+
 ```bash
-# 交互式排查会话
+# Interactive investigation session
 python -m iro_agent.cli chat
 
-# 启动企业协同网关 (如飞书长连接网关)
+# Start the enterprise collaboration gateway (e.g. Feishu long-connection gateway)
 python -m iro_agent.cli gateway start
 ```
 
-### 5. 运行工业评测集 (Evaluation)
+### 5. Run industrial evaluation sets
+
 ```bash
-# 运行开发评测集
+# Run the development evaluation set
 python -m iro_agent.cli eval dev
 
-# 运行回归质量守门评测集
+# Run the regression quality-gate evaluation set
 python -m iro_agent.cli eval regression
 
-# 运行外部私有盲测集 (需提供测试集路径)
+# Run an external private blind test set (provide the dataset path)
 python -m iro_agent.cli eval external --dataset D:/path/to/blind_cases
 ```
-评测报告与轨迹回放将自动生成至 `.eval_runs/<run_id>/report.md`。
 
-### 6. 运行全量自动化测试
+Evaluation reports and trajectory replays are generated automatically at `.eval_runs/<run_id>/report.md`.
+
+### 6. Run the full automated test suite
+
 ```bash
 pytest -q
 ```
-当前本机全量自动化测试为 **267 项通过**，其中本次增加 57 项配置引导、多源读取、来源隔离及回归验证。现场数据源连通性与在线模型服务仍需在实际运行环境中验证。
 
-### 7. 工控机版本更新与快捷启动
+The current local full test suite reports **272 tests passing**, covering the configuration wizard (including "other" material sources), multi-source reads, source isolation, and regression validation. On-site data-source connectivity and online model services still need to be verified in the actual runtime environment.
 
-- **工控机拉取更新（推荐命令）**：
-  工控机作为生产运行端，为避免历史分叉或文件冲突导致 `git pull` 中断，推荐每次更新时执行以下命令强制对齐远程仓库（本地受 `.gitignore` 保护的 `config.json` 与 `.venv` 不会被覆盖）：
+### 7. Industrial PC version update & quick launch
+
+- **Pull updates on the industrial PC (recommended command)**:
+  The industrial PC is the production runner. To avoid history divergence or file conflicts interrupting `git pull`, it is recommended to force-align with the remote repository on every update (`config.json` and `.venv`, protected by `.gitignore`, are not overwritten):
   ```bash
   git fetch origin main && git reset --hard origin/main
   ```
 
-- **Windows 一键交互菜单 (`start_iro_agent.bat`)**：
-  在 Windows 下可直接双击运行根目录的 `start_iro_agent.bat`，脚本已将自检、认知自举与日常排查整合为交互式菜单，防止现场误操作。
+- **Windows one-click interactive menu (`start_iro_agent.bat`)**:
+  On Windows, double-click the root `start_iro_agent.bat`; the script integrates self-check, knowledge bootstrap, and daily investigation into an interactive menu to prevent on-site misoperation.
 
 ---
 
-## 目录结构
+## Directory structure
 
 ```text
 iro_agent/
-├── runtime/                    # 统一运行时分发系统
-│   ├── dispatcher.py           # 企业级统一运行时消息与故障分发器
-│   └── models.py               # 路由枚举与分发结果模型
+├── runtime/                    # Unified runtime dispatch system
+│   ├── dispatcher.py           # Enterprise-grade unified runtime message & fault dispatcher
+│   └── models.py               # Routing enums and dispatch result models
 ├── investigation/              # Agentic Investigation Harness
-│   ├── harness.py              # 逐轮重规划动态排查引擎
-│   ├── llm_planner.py          # 结构化 LLM 调查规划器 (带自纠错)
-│   ├── planner_validator.py    # Schema、只读权限与预算校验器
-│   ├── tool_registry.py        # 统一只读工具注册表与权限白名单
-│   ├── hypotheses.py           # 竞争假设推演与生命周期状态机
-│   ├── evaluator.py            # 证据事实化提取与可观测性盲区标注
-│   ├── state.py                # 动态排查状态机与预算跟踪
-│   ├── stop_conditions.py      # 状态驱动确定性停止判定
-│   ├── trace.py                # 完整排查轨迹与因果证据溯源
-│   └── physical_escalation.py  # 真实物理升级判定与 Guardrail
+│   ├── harness.py              # Per-round re-planning dynamic investigation engine
+│   ├── llm_planner.py          # Structured LLM investigation planner (with self-correction)
+│   ├── planner_validator.py    # Schema, read-only permission, and budget validator
+│   ├── tool_registry.py        # Unified read-only tool registry and permission allow-list
+│   ├── hypotheses.py           # Competing-hypothesis generation and lifecycle state machine
+│   ├── evaluator.py            # Evidence fact extraction and observability-gap labeling
+│   ├── state.py                # Dynamic investigation state machine and budget tracking
+│   ├── stop_conditions.py      # State-driven deterministic stop decision
+│   ├── trace.py                # Complete investigation trajectory and causal evidence provenance
+│   └── physical_escalation.py  # Real physical escalation decision and guardrail
 ├── evaluation/                 # Evaluation Harness
-│   ├── runner.py               # 生产同构基准评测运行器 (走 RuntimeDispatcher)
-│   ├── dataset.py              # 评测集加载与格式校验
-│   ├── scoring.py              # 5 维加权综合评分
-│   ├── reporter.py             # 详细评测报告生成器
-│   └── graders/                # 确定性、证据锚定、安全与路径质检器
+│   ├── runner.py               # Production-identical benchmark runner (via RuntimeDispatcher)
+│   ├── dataset.py              # Evaluation-set loading and format validation
+│   ├── scoring.py              # 5-dimension weighted composite scoring
+│   ├── reporter.py             # Detailed evaluation report generator
+│   └── graders/                # Deterministic, evidence-grounding, safety, and path-quality graders
 ├── knowledge/                  # Project Learning Harness
-│   ├── unknowns.py             # Unknown 一等对象与优先级队列
-│   ├── learning_state.py       # 10 维知识覆盖度状态
-│   ├── learning_loop.py        # 自主多轮学习闭环
-│   ├── synthesizer.py          # 认知提炼器 (暴露失败阶段，统一置信度)
-│   ├── deep_reader.py          # 定向模块源码深读
-│   └── store.py                # 蓝图持久化
-├── memory/                     # 记忆与防污染
-│   ├── incident_store.py       # 故障经验库 (核验状态区隔)
-│   └── learning_store.py       # 运维规则库 (注入防污染溯源元数据)
-├── readers/                    # 只读数据源驱动 (Log, Git, DB, WRelease)
-├── security/                   # 只读安全与脱敏审计
-└── cli.py                      # 统一命令行总入口
+│   ├── unknowns.py             # Unknown first-class objects and priority queue
+│   ├── learning_state.py       # 10-dimension knowledge coverage state
+│   ├── learning_loop.py        # Autonomous multi-round learning loop
+│   ├── synthesizer.py          # Knowledge synthesizer (exposes failure stage, unified confidence)
+│   ├── deep_reader.py          # Targeted module source-code deep read
+│   └── store.py                # Blueprint persistence
+├── memory/                     # Memory and anti-pollution
+│   ├── incident_store.py       # Incident experience store (verification-status separation)
+│   └── learning_store.py       # Operations rule store (injection anti-pollution provenance metadata)
+├── readers/                    # Read-only data-source drivers (Log, Git, DB, WRelease)
+├── security/                   # Read-only safety and redaction auditing
+└── cli.py                      # Unified command-line entry point
 ```
 
 ---
 
-## 许可证
+## FAQ
 
-本项目遵循 MIT License 协议。
+**What is IRO_agent?**
+IRO_agent (Industrial Read-Only Agent) is an evidence-driven diagnostic AI agent for industrial software systems. It learns a project's operational model, investigates incidents with iterative evidence gathering, and grades its own diagnosis quality.
+
+**How is it different from a general chat assistant?**
+It does not answer from fixed one-shot steps. It runs three closed-loop harnesses (Project Learning, Investigation, Evaluation), re-plans every round from fresh evidence, and requires every claim to be grounded in a specific log line, config key, or database record.
+
+**Is it safe to run against a production system?**
+Yes — the safety boundary is strict read-only. It performs no file writes, no Git commits, no business-database writes, and no arbitrary shell execution against the diagnosed system.
+
+**What kinds of systems can it diagnose?**
+Industrial and on-premise software such as scheduling/dispatcher systems (e.g. WES), PostgreSQL-backed business databases, service logs, and dynamic web pages (DevExpress Blazor Server, Vue, React, ASP.NET WebForms).
+
+**Does it require internet access?**
+No. It supports fully offline / air-gapped industrial PCs via a single-file `uv.exe` install path. A China mirror is also provided for downloading the Playwright Chromium kernel on weak/intranet networks.
+
+**Which LLM does it use?**
+The model is configurable (a GLM client is provided in the codebase, and model credentials can be set via environment variables). Offline static bootstrap works without an LLM API, but online Q&A and diagnosis require valid model credentials.
+
+**How is diagnosis quality measured?**
+Through the Evaluation Harness, with layered graders (deterministic, evidence-grounding, safety, path-quality) over DEV, REGRESSION, and private BLIND datasets.
+
+**How do I get started?**
+Run `python -m iro_agent.cli setup` to complete the one-time wizard, then `python -m iro_agent.cli init` to bootstrap knowledge, and `chat` / `gateway start` / `eval` for interactive diagnosis, collaboration gateway, and evaluation.
+
+---
+
+## License
+
+This project is licensed under the MIT License.
+
+Machine-readable metadata (JSON-LD / Schema.org) with the canonical name, description, keywords, and GitHub About/topics is available at [`docs/METADATA.json`](docs/METADATA.json).
