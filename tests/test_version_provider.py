@@ -1,3 +1,4 @@
+from iro_agent.config import get_config
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -14,7 +15,7 @@ from iro_agent.analyzer.orchestrator import DiagnosticOrchestrator
 from iro_agent.memory.incident_store import IncidentStore
 
 
-def test_1_wrelease_no_pointer_confirmed_running_unknown():
+def test_1_wrelease_no_pointer_confirmed_running_unknown(reader_project):
     """Test 1: 交付包存在但现场运行指针不存在时，confirmed_running_release 必须为 UNKNOWN，严禁用最新包冒充"""
     reader = WReleaseReader()
     status = reader.get_running_release()
@@ -102,7 +103,8 @@ def test_6_git_head_is_source_code_version_semantic():
 def test_7_incident_memory_fields_and_provider_integrity():
     """Test 7: 创建故障事件，记忆库持久化必须包含 active_version_provider、timeline_event_ids 与互斥版本"""
     with tempfile.TemporaryDirectory() as tmp_dir:
-        db_path = Path(tmp_dir) / "test_store.db"
+        get_config().project_root = tmp_dir
+        db_path = Path(tmp_dir) / ".iro_agent" / "test_store.db"
         store = IncidentStore(str(db_path))
 
         inc_id = store.record_incident({
@@ -123,7 +125,7 @@ def test_7_incident_memory_fields_and_provider_integrity():
         assert record["timeline_event_ids"] == ["EVT-001", "EVT-002"]
 
 
-def test_8_resolver_three_states(monkeypatch):
+def test_8_resolver_three_states(monkeypatch, reader_project):
     """Test 8: 严格测试 Resolver 核心三态：Git+WRelease->Git, 无Git+WRelease->WRelease, 两者无->None"""
     # 状态 1: Git 与 WRelease 均可用 -> 优先 GitReader
     monkeypatch.setattr(GitReaderAdapter, "is_available", lambda self: True)

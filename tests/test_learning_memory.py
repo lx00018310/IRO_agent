@@ -1,3 +1,4 @@
+from iro_agent.config import get_config
 import tempfile
 from pathlib import Path
 from iro_agent.memory.learning_store import LearningMemoryStore
@@ -6,7 +7,8 @@ from iro_agent.memory.learning_store import LearningMemoryStore
 def test_learning_store_save_and_restart_persistence():
     """测试学习记忆规则保存及跨实例/重启持久化验证"""
     with tempfile.TemporaryDirectory() as tmpdir:
-        db_file = Path(tmpdir) / "test_learning.db"
+        get_config().project_root = tmpdir
+        db_file = Path(tmpdir) / ".iro_agent" / "test_learning.db"
 
         # 1. 模拟第一个实例执行 save_rule
         store1 = LearningMemoryStore(db_path=str(db_file))
@@ -40,7 +42,8 @@ def test_learning_store_save_and_restart_persistence():
 def test_learning_store_update_and_deactivate():
     """测试规则更新与停用机制"""
     with tempfile.TemporaryDirectory() as tmpdir:
-        db_file = Path(tmpdir) / "test_learning.db"
+        get_config().project_root = tmpdir
+        db_file = Path(tmpdir) / ".iro_agent" / "test_learning.db"
         store = LearningMemoryStore(db_path=str(db_file))
 
         rule_id = store.save_rule({

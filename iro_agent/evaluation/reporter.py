@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from typing import List
 from iro_agent.evaluation.models import EvalRunSummary, CaseEvalResult, EvalStatus
+from iro_agent.security.policy import validate_write_path
 
 
 class EvalReporter:
@@ -37,12 +38,13 @@ class EvalReporter:
 
     @classmethod
     def save_run_reports(cls, run_dir: Path, summary: EvalRunSummary) -> None:
+        run_dir = validate_write_path(run_dir)
         run_dir.mkdir(parents=True, exist_ok=True)
         # 1. 保存 summary.json
-        summary_file = run_dir / "summary.json"
+        summary_file = validate_write_path(run_dir / "summary.json")
         summary_file.write_text(json.dumps(summary.model_dump(), indent=2, ensure_ascii=False), encoding="utf-8")
 
         # 2. 保存 report.md
         md_content = cls.generate_markdown_report(summary)
-        report_file = run_dir / "report.md"
+        report_file = validate_write_path(run_dir / "report.md")
         report_file.write_text(md_content, encoding="utf-8")

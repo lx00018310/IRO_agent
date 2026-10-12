@@ -4,7 +4,7 @@ from iro_agent.readers.db_reader import DatabaseReader
 from iro_agent.security.policy import SecurityPolicyError
 
 
-def test_log_reader_task013():
+def test_log_reader_task013(reader_project):
     reader = LogReader()
     files = reader.discover_log_files()
     assert len(files) > 0, "应能发现 TASK-013 日志文件"

@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
+from iro_agent.readers.limits import ReadBudget, ReadLimitError
 
 
 class DeepReadFile(BaseModel):
@@ -48,6 +49,7 @@ class TargetedModuleDeepReader:
         """根据模块与实体分类，优先抓取高业务价值代码并读取内容"""
         result = DeepReadResult()
         curr_total_lines = 0
+        read_budget = ReadBudget()
 
         # 若目标模块为空，退化为顶级目录
         active_modules = target_modules[: self.max_modules] if target_modules else ["src", "app"]
@@ -109,8 +111,9 @@ class TargetedModuleDeepReader:
                     continue
 
                 try:
-                    with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
-                        lines = f.readlines()
+                    lines = read_budget.read_text(full_path).splitlines(keepends=True)
+                except ReadLimitError:
+                    raise
                 except Exception:
                     continue
 

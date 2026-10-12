@@ -52,7 +52,7 @@ def test_setup_can_register_two_of_each_kind_and_never_persist_env_values(tmp_pa
     for name in ("code_a", "code_b"):
         answers += ["1", name, "后端代码", f'"{tmp_path / name}"']
     for name in ("db_a", "db_b"):
-        answers += ["2", name, "业务数据库", "127.0.0.1", "5432", name, "readonly", "TEST_DB_PASS"]
+        answers += ["2", name, "业务数据库", "postgresql", "127.0.0.1", "5432", name, "readonly", "TEST_DB_PASS"]
     for name in ("logs_a", "logs_b"):
         answers += ["3", name, "服务日志", str(tmp_path / name)]
     for name in ("http_a", "http_b"):

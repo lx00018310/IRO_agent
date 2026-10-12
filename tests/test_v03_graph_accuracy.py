@@ -235,9 +235,9 @@ def test_validator_dangling_edge_pruning():
     assert cleaned_graph_dict["edges"][0]["target_entity_id"] == "B"
 
 
-def test_agent_engine_registers_code_graph_tools():
+def test_agent_engine_registers_code_graph_tools(tmp_path):
     """验证 Agent 引擎正确注册了代码关系图工具 Schema 与 Handler"""
-    config = IROConfig()
+    config = IROConfig(project_root=str(tmp_path))
     client = init_agent_engine(config)
 
     assert "code_trace_api_to_table" in client.tool_handlers

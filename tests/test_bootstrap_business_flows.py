@@ -1,3 +1,4 @@
+from iro_agent.config import get_config
 import tempfile
 from pathlib import Path
 from iro_agent.knowledge.models import BusinessFlow, ProjectBlueprint, ProjectMetadata
@@ -25,6 +26,7 @@ def test_business_flow_learning_and_lookup():
 
     # 测试存储与通过 ProjectLookupEngine 的 flow_lookup 检索
     with tempfile.TemporaryDirectory() as tmpdir:
+        get_config().project_root = tmpdir
         root = Path(tmpdir)
         store = ProjectKnowledgeStore(base_dir=root)
         bp = ProjectBlueprint(

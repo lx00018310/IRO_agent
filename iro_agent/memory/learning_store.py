@@ -4,20 +4,19 @@ import re
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from iro_agent.config import get_config
+from iro_agent.security.policy import validate_sqlite_path
 
 
 class LearningMemoryStore:
     """持久化学习记忆库：使用本地 SQLite 存储操作员修正、运维原则与认知规则，支持跨重启持久化检索与防遗忘"""
 
     def __init__(self, db_path: Optional[str] = None):
-        if db_path:
-            self.db_path = Path(db_path)
-        else:
-            self.db_path = Path(get_config().storage.memory_db_path)
+        self.config = get_config()
+        self.db_path = validate_sqlite_path(db_path or self.config.storage.memory_db_path, self.config)
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.db_path))
+        conn = sqlite3.connect(str(validate_sqlite_path(self.db_path, self.config)))
         conn.row_factory = sqlite3.Row
         return conn
 

@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from iro_agent.security.redactor import redact_secrets
 from iro_agent.knowledge.code_graph import CodeRelationshipGraph
 from iro_agent.knowledge.scanners.composite import CompositeCodeScanner
+from iro_agent.readers.limits import iter_source_files
 
 
 class CodeEntity(BaseModel):
@@ -36,6 +37,9 @@ class TargetedCodeScanner:
     def scan(self, max_files: int = 200) -> CodeScanResult:
         if not self.project_root.exists() or not self.project_root.is_dir():
             return CodeScanResult()
+        # Bound recursive discovery before framework adapters enumerate the same source tree.
+        for _ in iter_source_files(self.project_root, {"node_modules", "target", "build", "dist", "__pycache__"}):
+            pass
 
         # 1. 运行多语言复合扫描器
         scanner_res, graph = self.composite.scan()

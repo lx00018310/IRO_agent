@@ -7,7 +7,7 @@ from typing import Optional, Tuple
 from iro_agent.config import get_config, load_config, IROConfig, resolve_config_path
 from iro_agent.setup import SetupWizard, SetupCancelled, SetupRequiredError, require_setup, masked_config, validation_message
 from pydantic import ValidationError
-from iro_agent.security.policy import validate_read_path
+from iro_agent.security.policy import validate_read_path, validate_write_path
 from iro_agent.security.audit import AuditLogger
 from iro_agent.readers.db_reader import DatabaseReader
 from iro_agent.memory.incident_store import IncidentStore
@@ -102,7 +102,7 @@ def init_agent_engine(config: IROConfig) -> GlmClient:
     )
     from iro_agent.knowledge.lookup import ProjectLookupEngine
     from iro_agent.knowledge.store import ProjectKnowledgeStore
-    knowledge_store = ProjectKnowledgeStore(base_dir=Path(config.project_root) if Path(config.project_root).exists() else Path.cwd())
+    knowledge_store = ProjectKnowledgeStore(config=config)
     lookup_engine = ProjectLookupEngine(store=knowledge_store)
 
     from iro_agent.knowledge.code_graph import CodeRelationshipGraph
@@ -347,7 +347,7 @@ def run_gateway_doctor(config: IROConfig):
         checks.append(("Database read-only connection", "连接成功 (只读)" if db_ok else "不可达或未启动", db_ok))
 
     # 8. Incident database writable
-    mem_ok = os.path.exists(config.storage.memory_db_path)
+    mem_ok = validate_write_path(config.storage.memory_db_path, config).is_file()
     checks.append(("Incident database writable", "SQLite 可读写" if mem_ok else "未初始化", mem_ok))
 
     # 9. Feishu client initialized
@@ -456,7 +456,7 @@ def cmd_eval(args):
     print(f"  用例总数: {summary.total_cases} | 通过: {summary.passed_cases} | 失败: {summary.failed_cases} | 异常: {summary.error_cases}")
     print(f"  平均综合得分: {summary.average_score * 100:.2f}%")
     print(f"  安全违规数: {summary.safety_violations}")
-    print(f"  详细报告已保存至: .eval_runs/{summary.run_id}/report.md")
+    print(f"  详细报告已保存至: {runner.output_dir / summary.run_id / 'report.md'}")
     print("==================================================")
 
 

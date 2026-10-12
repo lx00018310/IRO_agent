@@ -26,7 +26,7 @@ def test_eval_runner_records_infra_error_on_fatal_exception(tmp_path):
     runner = EvaluationRunner(
         dataset_type="external",
         custom_path=str(tmp_path),
-        output_dir=str(tmp_path / "runs"),
+        output_dir=str(tmp_path / ".iro_agent" / "runs"),
     )
 
     # 模拟底座或排查主流程抛出致命连接异常
@@ -68,7 +68,7 @@ def test_eval_runner_fails_on_tool_failure_without_fake_pass(tmp_path):
         dataset_type="external",
         custom_path=str(tmp_path),
         tool_handlers=failing_tools,
-        output_dir=str(tmp_path / "runs"),
+        output_dir=str(tmp_path / ".iro_agent" / "runs"),
     )
 
     summary = runner.run()

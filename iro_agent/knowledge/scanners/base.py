@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 from iro_agent.knowledge.code_entities import CodeEntityNode, CodeRelationshipEdge
+from iro_agent.readers.limits import ReadBudget
 
 
 class ScannerResult(BaseModel):
@@ -17,12 +18,13 @@ class BaseCodeScannerAdapter(ABC):
 
     def __init__(self, project_root: Path):
         self.project_root = Path(project_root).resolve()
+        self.read_budget = ReadBudget()
 
     def read_source_file(self, file_path: Path) -> str:
         target = file_path.resolve()
         if not target.is_relative_to(self.project_root):
             raise PermissionError("代码扫描文件不能越出所选来源目录")
-        return target.read_text(encoding="utf-8", errors="ignore")
+        return self.read_budget.read_text(target)
 
     @abstractmethod
     def detect(self) -> bool:

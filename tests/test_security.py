@@ -1,3 +1,4 @@
+from iro_agent.config import get_config
 import tempfile
 import pytest
 from pathlib import Path
@@ -13,6 +14,7 @@ from iro_agent.security import (
 
 def test_validate_read_path_allowed():
     with tempfile.TemporaryDirectory() as tmp_dir:
+        get_config().project_root = tmp_dir
         test_file = Path(tmp_dir) / "test.log"
         test_file.write_text("test content", encoding="utf-8")
 
@@ -44,6 +46,7 @@ def test_validate_read_path_forbidden():
 
 def test_validate_read_path_traversal():
     with tempfile.TemporaryDirectory() as tmp_dir:
+        get_config().project_root = tmp_dir
         config = IROConfig(
             project_root=tmp_dir,
             wrelease_dir="",
@@ -85,7 +88,8 @@ def test_redact_secrets():
 
 def test_audit_logger():
     with tempfile.TemporaryDirectory() as tmp_dir:
-        db_path = Path(tmp_dir) / "audit.db"
+        get_config().project_root = tmp_dir
+        db_path = Path(tmp_dir) / ".iro_agent" / "audit.db"
         logger = AuditLogger(str(db_path))
 
         row_id = logger.record(

@@ -7,9 +7,9 @@ from iro_agent.memory.incident_store import IncidentStore
 from iro_agent.gateway.http_adapter import HttpGatewayAdapter
 
 
-def test_missing_api_key_raises():
+def test_missing_api_key_raises(tmp_path):
     """验证未配置 API Key 时坚决拒绝执行并报错，不再进行任何假降级"""
-    config = IROConfig(glm={"api_key": ""})
+    config = IROConfig(project_root=str(tmp_path), glm={"api_key": ""})
     engine = init_agent_engine(config)
 
     with pytest.raises(ValueError, match="未配置有效的 GLM API Key"):

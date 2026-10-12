@@ -1,9 +1,13 @@
-import os
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from iro_agent.config import get_config, IROConfig
 from iro_agent.security.policy import validate_read_path, SecurityPolicyError
 from iro_agent.security.audit import AuditLogger
+from iro_agent.security.redactor import redact_secrets
+from iro_agent.readers.limits import (
+    ReadBudget, ReadLimitError, bounded_int, iter_source_files,
+    MAX_RESULTS, MAX_READ_LINES, MAX_OUTPUT_CHARS,
+)
 
 
 class CodeReader:
@@ -20,6 +24,10 @@ class CodeReader:
 
     def read_file(self, relative_path: str, start_line: int = 1, line_count: int = 200) -> str:
         """安全读取指定代码文件的片段（带行号）"""
+        bounded_int(start_line, "start_line", 100000)
+        bounded_int(line_count, "line_count", MAX_READ_LINES)
+        if not relative_path or Path(relative_path).is_absolute():
+            raise SecurityPolicyError("代码文件必须使用所选来源内的相对路径")
         target_path = validate_read_path(self.root_dir / relative_path, self.config)
         if not target_path.is_relative_to(self.root_dir):
             raise SecurityPolicyError("代码文件不能越出所选来源目录")
@@ -27,8 +35,7 @@ class CodeReader:
             raise FileNotFoundError(f"文件不存在: {target_path}")
 
         try:
-            with open(target_path, "r", encoding="utf-8", errors="replace") as f:
-                lines = f.readlines()
+            lines = ReadBudget().read_text(target_path).splitlines()
         except Exception as e:
             self.audit.record(
                 tool_name="CodeReader",
@@ -54,7 +61,10 @@ class CodeReader:
         formatted = []
         for idx, line in enumerate(selected, start=start_idx + 1):
             formatted.append(f"{idx:4d}: {line.rstrip()}")
-        return "\n".join(formatted)
+        content = redact_secrets("\n".join(formatted))
+        if len(content) > MAX_OUTPUT_CHARS:
+            raise ReadLimitError("observability_gap: 阅读片段超过输出上限，请减少 line_count")
+        return content
 
     def search_code(
         self,
@@ -64,47 +74,40 @@ class CodeReader:
         max_results: int = 50,
     ) -> List[Dict[str, Any]]:
         """在只读代码目录中搜索关键字，支持按子目录与后缀过滤"""
+        bounded_int(max_results, "max_results", MAX_RESULTS)
         search_base = validate_read_path(self.root_dir / sub_dir, self.config)
+        if not search_base.is_relative_to(self.root_dir):
+            raise SecurityPolicyError("代码搜索不能越出所选来源目录")
         valid_exts = set(extensions) if extensions else {
             ".ts", ".js", ".vue", ".json", ".sql", ".py", ".md",
             ".java", ".kt", ".xml", ".yml", ".yaml", ".properties", ".env",
-            ".sh", ".bat", ".ps1",
+            ".sh", ".bat", ".ps1", ".cs", ".config", ".csproj",
         }
         skip_dirs = {".git", "node_modules", "dist", ".cache", "cache"}
 
-        from iro_agent.security.redactor import redact_secrets
-
         results = []
-        for root, dirs, files in os.walk(search_base):
-            dirs[:] = [d for d in dirs if d not in skip_dirs]
-            for file in files:
-                ext = Path(file).suffix.lower()
-                # 兼容 .env 文件的特殊命名
-                if file.startswith(".env") or ext == ".env":
-                    pass
-                elif valid_exts and ext not in valid_exts:
-                    continue
-                file_path = Path(root) / file
-                try:
-                    resolved = validate_read_path(file_path, self.config)
-                    if not resolved.is_relative_to(self.root_dir):
-                        continue
-                    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-                        for line_no, line in enumerate(f, start=1):
-                            if query.lower() in line.lower():
-                                rel_path = str(file_path.relative_to(self.root_dir))
-                                clean_content = redact_secrets(line.strip()[:200])
-                                results.append({
-                                    "file": rel_path,
-                                    "line": line_no,
-                                    "content": clean_content,
-                                })
-                                if len(results) >= max_results:
-                                    break
-                except Exception:
-                    continue
+        budget = ReadBudget()
+        for file_path in iter_source_files(search_base, skip_dirs):
             if len(results) >= max_results:
                 break
+            file = file_path.name
+            ext = file_path.suffix.lower()
+            if not file.startswith(".env") and valid_exts and ext not in valid_exts:
+                continue
+            try:
+                resolved = validate_read_path(file_path, self.config)
+                if not resolved.is_relative_to(self.root_dir):
+                    continue
+                for line_no, line in enumerate(budget.read_text(resolved).splitlines(), start=1):
+                    if query.lower() in line.lower():
+                        results.append({"file": str(file_path.relative_to(self.root_dir)), "line": line_no,
+                                        "content": redact_secrets(line.strip()[:200])})
+                        if len(results) >= max_results:
+                            break
+            except ReadLimitError:
+                raise
+            except OSError:
+                continue
 
         self.audit.record(
             tool_name="CodeReader",

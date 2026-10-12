@@ -40,15 +40,16 @@ class SchemaScanner:
         self.audit = audit_logger or AuditLogger()
         self.reader = DatabaseReader(db_config=self.db_cfg, audit_logger=self.audit)
 
-    def scan(self, target_schema: str = "public") -> SchemaScanResult:
+    def scan(self, target_schema: Optional[str] = None) -> SchemaScanResult:
         """执行严格只读元数据采集，获取所有用户表、字段、主键与注释"""
         if not self.db_cfg or not self.db_cfg.host or not self.db_cfg.database:
             return SchemaScanResult(connected=False, error="数据库配置为空或未启用")
+        target_schema = target_schema or (self.db_cfg.database if self.db_cfg.type == "mysql" else "public")
 
         try:
             # 1. 探查所有用户基表
             tables_sql = """
-            SELECT table_name
+            SELECT table_name AS table_name
             FROM information_schema.tables
             WHERE table_schema = %s AND table_type = 'BASE TABLE'
             ORDER BY table_name;
@@ -61,11 +62,12 @@ class SchemaScanner:
 
             # 2. 探查主键
             pk_sql = """
-            SELECT tc.table_name, kcu.column_name
+            SELECT tc.table_name AS table_name, kcu.column_name AS column_name
             FROM information_schema.table_constraints tc
             JOIN information_schema.key_column_usage kcu
               ON tc.constraint_name = kcu.constraint_name
               AND tc.table_schema = kcu.table_schema
+              AND tc.table_name = kcu.table_name
             WHERE tc.constraint_type = 'PRIMARY KEY'
               AND tc.table_schema = %s;
             """
@@ -74,7 +76,8 @@ class SchemaScanner:
 
             # 3. 探查字段列表与类型
             cols_sql = """
-            SELECT table_name, column_name, data_type, is_nullable
+            SELECT table_name AS table_name, column_name AS column_name,
+                   data_type AS data_type, is_nullable AS is_nullable
             FROM information_schema.columns
             WHERE table_schema = %s
             ORDER BY table_name, ordinal_position;

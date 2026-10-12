@@ -6,6 +6,7 @@ import requests
 from iro_agent.config import get_config, GlmConfig
 from iro_agent.security.redactor import redact_secrets
 from iro_agent.security.audit import AuditLogger
+from iro_agent.readers.limits import MAX_OUTPUT_CHARS
 
 
 SYSTEM_PROMPT = """你是工业现场只读智能诊断助手 IRO_agent。
@@ -293,8 +294,16 @@ class GlmClient:
             "name": "sources_list", "description": "列出当前项目的所有来源 ID、类型、用途和位置；不含凭据",
             "parameters": {"type": "object", "properties": {}},
         }})
+        schema.append({"type": "function", "function": {
+            "name": "code_read", "description": "只读分段阅读指定来源的源码或文本配置；返回行号，支持 C# .cs/.config",
+            "parameters": {"type": "object", "properties": {
+                "file": {"type": "string", "description": "来源目录内的相对文件路径"},
+                "start_line": {"type": "integer", "minimum": 1, "maximum": 100000},
+                "line_count": {"type": "integer", "minimum": 1, "maximum": 500},
+            }, "required": ["file"]},
+        }})
         for tool in schema:
-            if tool["function"]["name"] in {"log_search", "code_search", "db_query", "db_list_tables", "db_describe_table", "web_fetch", "other_read"}:
+            if tool["function"]["name"] in {"log_search", "code_search", "code_read", "db_query", "db_list_tables", "db_describe_table", "web_fetch", "other_read"}:
                 tool["function"]["parameters"]["properties"]["source_id"] = {
                     "type": "string", "description": "可选来源 ID，省略时分别读取该类所有来源；结果保留来源标识",
                 }
@@ -429,7 +438,8 @@ class GlmClient:
                     tool_res = {"error": f"工具 {func_name} 未实现"}
 
                 from iro_agent.readers.sources import summarize_source_output
-                prompt_result = summarize_source_output(tool_res)
+                prompt_result = summarize_source_output(tool_res,
+                    preview_chars=MAX_OUTPUT_CHARS if func_name == "code_read" else 1200)
                 tool_res_str = json.dumps(prompt_result, ensure_ascii=False, default=str)
                 if verbose:
                     preview = tool_res_str if len(tool_res_str) <= 1000 else tool_res_str[:1000] + f"... [已截断，共 {len(tool_res_str)} 字符]"

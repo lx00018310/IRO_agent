@@ -51,3 +51,34 @@ def validate_read_path(raw_path: str | Path, config: Optional[IROConfig] = None)
         )
 
     return target
+
+
+def agent_data_dir(config: Optional[IROConfig] = None) -> Path:
+    """The configured workspace is the only owner of runtime output; never fall back to cwd."""
+    cfg = config or get_config()
+    if not cfg.project_root or not Path(cfg.project_root).is_dir():
+        raise SecurityPolicyError("Agent 工作目录未配置或不可用；不能写入其他目录")
+    workspace = Path(cfg.project_root).resolve()
+    data_dir = workspace / ".iro_agent"
+    if data_dir.resolve() != data_dir:
+        raise SecurityPolicyError("Agent 数据目录不能是符号链接或目录联接")
+    return data_dir
+
+
+def validate_write_path(raw_path: str | Path, config: Optional[IROConfig] = None) -> Path:
+    """Confine application-managed writes/deletes, including linked paths, to .iro_agent."""
+    root = agent_data_dir(config)
+    target = Path(raw_path)
+    if not target.is_absolute():
+        target = root / target
+    target = target.resolve()
+    if not target.is_relative_to(root):
+        raise SecurityPolicyError(f"禁止写入 Agent 数据目录之外: {target}；允许目录: {root}")
+    return target
+
+
+def validate_sqlite_path(raw_path: str | Path, config: Optional[IROConfig] = None) -> Path:
+    target = validate_write_path(raw_path, config)
+    for suffix in ("-journal", "-wal", "-shm"):
+        validate_write_path(str(target) + suffix, config)
+    return target

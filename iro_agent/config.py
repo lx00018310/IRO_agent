@@ -3,18 +3,27 @@ import os
 import hashlib
 import re
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Literal
 from urllib.parse import urlsplit
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class DatabaseConfig(BaseModel):
+    type: Literal["postgresql", "mysql"] = "postgresql"
     host: str = ""
     port: int = 5432
     user: str = ""
     password: str = ""
     database: str = ""
     connect_timeout: int = 5
+    query_timeout: int = Field(default=10, ge=1, le=60)
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_port(cls, data):
+        if isinstance(data, dict) and data.get("type") == "mysql" and "port" not in data:
+            return {**data, "port": 3306}
+        return data
 
 
 class GlmConfig(BaseModel):
@@ -168,7 +177,7 @@ class SourcesConfig(BaseModel):
                 elif kind == "http":
                     location = (kind, source.url)
                 else:
-                    location = (kind, source.host.lower(), source.port, source.database, source.user)
+                    location = (kind, source.type, source.host.lower(), source.port, source.database, source.user)
                 if location in locations:
                     raise ValueError(f"重复的数据来源: {source.id}")
                 locations.add(location)

@@ -4,9 +4,9 @@ from iro_agent.investigation.harness import InvestigationHarness
 from iro_agent.config import IROConfig
 
 
-def test_no_silent_planner_fallback_when_credentials_missing():
+def test_no_silent_planner_fallback_when_credentials_missing(tmp_path):
     """验证当 planner_mode='llm' 且未注入 client/缺乏有效 API key 时，严格 Fail Closed，禁止降级为 deterministic"""
-    fake_config = IROConfig()
+    fake_config = IROConfig(project_root=str(tmp_path))
     fake_config.glm.api_key = "MOCK_INVALID_KEY"
 
     with patch("iro_agent.investigation.harness.get_config", return_value=fake_config):

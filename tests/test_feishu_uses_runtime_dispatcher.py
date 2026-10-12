@@ -24,7 +24,7 @@ def test_feishu_message_routes_through_dispatcher(tmp_path):
         investigation_report=mock_report,
     )
 
-    db_file = tmp_path / "dedup.db"
+    db_file = tmp_path / ".iro_agent" / "dedup.db"
     gateway = FeishuGateway(
         dispatcher=mock_dispatcher,
         dedup_db_path=str(db_file),

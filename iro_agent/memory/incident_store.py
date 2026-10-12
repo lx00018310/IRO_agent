@@ -4,6 +4,7 @@ import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from iro_agent.config import get_config
+from iro_agent.security.policy import validate_sqlite_path
 
 
 # 故障记忆验证状态常量 (Phase 13 Memory 写入与防污染规则)
@@ -18,14 +19,12 @@ class IncidentStore:
     """内部故障记忆库：使用本地 SQLite 持久化历史故障与诊断结论，提供相似案例溯源与统计"""
 
     def __init__(self, db_path: Optional[str] = None):
-        if db_path:
-            self.db_path = Path(db_path)
-        else:
-            self.db_path = Path(get_config().storage.memory_db_path)
+        self.config = get_config()
+        self.db_path = validate_sqlite_path(db_path or self.config.storage.memory_db_path, self.config)
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
-        return sqlite3.connect(str(self.db_path))
+        return sqlite3.connect(str(validate_sqlite_path(self.db_path, self.config)))
 
     def _init_db(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)

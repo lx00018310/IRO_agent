@@ -1,3 +1,4 @@
+from iro_agent.config import get_config
 import tempfile
 from pathlib import Path
 from iro_agent.memory.learning_store import LearningMemoryStore
@@ -6,7 +7,8 @@ from iro_agent.memory.learning_store import LearningMemoryStore
 def test_learning_recall_ranking_and_usage():
     """测试学习规则的前置召回、相关度打分与命中计数"""
     with tempfile.TemporaryDirectory() as tmpdir:
-        db_file = Path(tmpdir) / "test_recall.db"
+        get_config().project_root = tmpdir
+        db_file = Path(tmpdir) / ".iro_agent" / "test_recall.db"
         store = LearningMemoryStore(db_path=str(db_file))
 
         # 录入两条不同领域的学习规则

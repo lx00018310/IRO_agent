@@ -137,7 +137,8 @@ class KnowledgeSynthesizer:
             generated_at=now_str,
             last_verified_at=now_str,
             source_root=str(tree_res.project_root),
-            database_type="postgresql",
+            database_type=", ".join(sorted({s.type for s in self.config.sources.databases}))
+                if self.config.sources is not None else self.config.database.type,
         )
 
         # 整理全局 known_unknowns

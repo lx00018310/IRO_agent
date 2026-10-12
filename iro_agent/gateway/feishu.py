@@ -2,7 +2,6 @@ import os
 import json
 import re
 import time
-import tempfile
 import threading
 import logging
 from pathlib import Path
@@ -27,6 +26,7 @@ from iro_agent.gateway.dedup import EventDeduplicator
 from iro_agent.llm.glm_client import GlmClient
 from iro_agent.security.redactor import redact_secrets
 from iro_agent.security.audit import AuditLogger
+from iro_agent.security.policy import validate_write_path
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +73,8 @@ class FeishuGateway(GatewayAdapter):
         self.app_secret = self.config.feishu.app_secret
         self.bot_name = self.config.feishu.bot_name or "IRO_agent"
         self.bot_open_id: Optional[str] = None
-        self.audit = AuditLogger()
-        self.dedup = EventDeduplicator(dedup_db_path)
+        self.audit = AuditLogger(config=self.config)
+        self.dedup = EventDeduplicator(dedup_db_path, config=self.config)
         self.session_history: Dict[str, list] = {}
         # 会话级最近现场图片短时缓存: session_id -> {"image_path": str, "timestamp": float}
         self.session_recent_images: Dict[str, dict] = {}
@@ -143,7 +143,7 @@ class FeishuGateway(GatewayAdapter):
                 path = img_info.get("image_path")
                 if path and os.path.exists(path):
                     try:
-                        os.remove(path)
+                        validate_write_path(path, self.config).unlink()
                     except Exception:
                         pass
         for sess_id in expired_sessions:
@@ -453,7 +453,7 @@ class FeishuGateway(GatewayAdapter):
             # 仅在图片被作为诊断输入消费后，才真正物理销毁临时文件
             if should_cleanup_img and tmp_image_to_use and os.path.exists(tmp_image_to_use):
                 try:
-                    os.remove(tmp_image_to_use)
+                    validate_write_path(tmp_image_to_use, self.config).unlink()
                 except Exception as ex:
                     logger.warning(f"清理临时图片失败: {ex}")
 
@@ -541,10 +541,11 @@ class FeishuGateway(GatewayAdapter):
         if not self.client:
             return None
 
-        base_tmp = target_dir or os.path.join(tempfile.gettempdir(), "iro_agent_feishu_tmp")
-        os.makedirs(base_tmp, exist_ok=True)
-        safe_filename = f"feishu_img_{file_key[:16]}_{int(datetime.now(timezone.utc).timestamp())}.png"
-        target_path = os.path.join(base_tmp, safe_filename)
+        base_tmp = validate_write_path(target_dir or "feishu_tmp", self.config)
+        base_tmp.mkdir(parents=True, exist_ok=True)
+        safe_key = re.sub(r"[^A-Za-z0-9_-]", "_", file_key[:16])
+        safe_filename = f"feishu_img_{safe_key}_{int(datetime.now(timezone.utc).timestamp())}.png"
+        target_path = validate_write_path(base_tmp / safe_filename, self.config)
 
         try:
             request = (
@@ -559,11 +560,11 @@ class FeishuGateway(GatewayAdapter):
                 logger.error(f"飞书图片下载失败: code={response.code}, msg={response.msg}")
                 return None
 
-            with open(target_path, "wb") as f:
+            with open(validate_write_path(target_path, self.config), "wb") as f:
                 f.write(response.file.read())
 
             if os.path.getsize(target_path) > 15 * 1024 * 1024:
-                os.remove(target_path)
+                validate_write_path(target_path, self.config).unlink()
                 logger.warning("飞书图片超出 15MB 限制，已被拒绝")
                 return None
 
@@ -571,7 +572,7 @@ class FeishuGateway(GatewayAdapter):
         except Exception as e:
             logger.error(f"飞书资源下载异常: {e}")
             if os.path.exists(target_path):
-                os.remove(target_path)
+                validate_write_path(target_path, self.config).unlink()
             return None
 
     def health(self) -> Dict[str, Any]:

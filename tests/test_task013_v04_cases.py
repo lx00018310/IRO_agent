@@ -13,8 +13,9 @@ from iro_agent.config import get_config
 def test_task013_case1_and_case5_restart_safe_configuration_memory():
     """TASK-013 Case 1 & Case 5: 配置纠错规则持久化、跨重启依然生效并导引检索到 ordersys-settings.json"""
     with tempfile.TemporaryDirectory() as tmpdir:
+        get_config().project_root = tmpdir
         root = Path(tmpdir)
-        db_file = root / "memory.db"
+        db_file = root / ".iro_agent" / "memory.db"
 
         # 1. 用户下发纠错指令并由 CorrectionDetector 识别
         user_correction = "记住：查询配置应该遍历配置目录中的所有配置文件，不能只用 grep。"
@@ -83,6 +84,7 @@ def test_task013_case1_and_case5_restart_safe_configuration_memory():
 def test_task013_case2_and_case3_case4_deep_bootstrap_depth():
     """TASK-013 Case 2, 3, 4: 10 阶段自举全景知识、ConfigCatalog 索引以及端到端业务流"""
     with tempfile.TemporaryDirectory() as tmpdir:
+        get_config().project_root = tmpdir
         root = Path(tmpdir)
         (root / "backend").mkdir()
         (root / "backend" / "models.py").write_text(

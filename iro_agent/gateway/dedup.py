@@ -2,18 +2,25 @@ import os
 import sqlite3
 from datetime import datetime, timezone
 from typing import Optional
+from iro_agent.config import get_config
+from iro_agent.security.policy import validate_sqlite_path
 
 
 class EventDeduplicator:
     """网关事件与消息防重去重管理器（基于三态状态机：PROCESSING -> COMPLETED / FAILED）"""
 
-    def __init__(self, db_path: str = "iro_agent_gateway_events.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: str = "iro_agent_gateway_events.db", config=None):
+        self.config = config or get_config()
+        self.db_path = validate_sqlite_path(db_path, self.config)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
+
+    def _connect(self):
+        return sqlite3.connect(str(validate_sqlite_path(self.db_path, self.config)))
 
     def _init_db(self) -> None:
         """初始化去重表，支持状态跟踪与重试锁"""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -53,7 +60,7 @@ class EventDeduplicator:
         now_iso = now_dt.isoformat()
         primary_key = self._get_key(event_id, message_id)
 
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT status, updated_at FROM gateway_events WHERE event_id = ?",
@@ -120,7 +127,7 @@ class EventDeduplicator:
         now_iso = datetime.now(timezone.utc).isoformat()
         primary_key = self._get_key(event_id, message_id)
 
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             conn.execute(
                 "UPDATE gateway_events SET status = 'COMPLETED', updated_at = ? WHERE event_id = ?",
                 (now_iso, primary_key),
@@ -135,7 +142,7 @@ class EventDeduplicator:
         now_iso = datetime.now(timezone.utc).isoformat()
         primary_key = self._get_key(event_id, message_id)
 
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             conn.execute(
                 "UPDATE gateway_events SET status = 'FAILED', updated_at = ?, error_msg = ? WHERE event_id = ?",
                 (now_iso, str(error or "")[:500], primary_key),
@@ -150,7 +157,7 @@ class EventDeduplicator:
         """获取指定事件当前状态（供测试与排查）"""
         if not event_id:
             return None
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT status FROM gateway_events WHERE event_id = ?", (event_id,))
             row = cursor.fetchone()
@@ -158,6 +165,6 @@ class EventDeduplicator:
 
     def clear(self) -> None:
         """清空去重库（供自动化测试使用）"""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             conn.execute("DELETE FROM gateway_events")
             conn.commit()

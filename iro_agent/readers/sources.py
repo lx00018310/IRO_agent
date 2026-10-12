@@ -13,6 +13,8 @@ from iro_agent.readers.db_reader import DatabaseReader
 from iro_agent.readers.log_reader import LogReader
 from iro_agent.security.audit import AuditLogger
 from iro_agent.security.redactor import redact_secrets
+from iro_agent.security.policy import validate_read_path
+from iro_agent.readers.limits import ReadBudget, iter_source_files
 
 # Read-only text formats accepted by other_read; binaries are listed but never decoded.
 OTHER_TEXT_SUFFIXES = {
@@ -68,7 +70,7 @@ def summarize_source_output(value, preview_chars=1200):
 class SourceReaders:
     def __init__(self, config: Optional[IROConfig] = None, audit_logger=None):
         self.config = config or get_config()
-        self.audit = audit_logger or AuditLogger(db_path=self.config.storage.audit_db_path)
+        self.audit = audit_logger or AuditLogger(config=self.config)
 
     def inventory(self):
         """Never expose passwords, header values or model credentials to a planner."""
@@ -82,7 +84,7 @@ class SourceReaders:
                 if kind in ("code", "logs"):
                     item["path"] = source.path
                 elif kind == "databases":
-                    item.update(host=source.host, port=source.port, database=source.database)
+                    item.update(type=source.type, host=source.host, port=source.port, database=source.database)
                 elif kind == "other":
                     item["path"] = source.path
                 else:
@@ -152,12 +154,12 @@ class SourceReaders:
             pass
 
     def _other_file_content(self, path: Path, keyword: Optional[str], max_chars: int) -> dict:
+        path = validate_read_path(path, self.config)
         if not is_other_text_file(path):
             return {"file": path.name, "binary": True,
                     "message": "二进制/文档文件仅列出位置，不做内容读取；如需检索请先导出为文本格式"}
         size = path.stat().st_size
-        with path.open("r", encoding="utf-8", errors="replace") as stream:
-            content = stream.read(OTHER_MAX_BYTES)
+        content = ReadBudget().read_text(path)
         if keyword:
             content = "\n".join(line for line in content.splitlines() if keyword.lower() in line.lower())
         return {"file": path.name, "size_bytes": size, "content": content[:max_chars],
@@ -184,7 +186,8 @@ class SourceReaders:
             def visible(path: Path) -> bool:
                 return path.is_file() and not path.name.startswith(".") \
                     and "__pycache__" not in path.parts and "node_modules" not in path.parts
-            files = sorted(p for p in root.rglob("*") if visible(p))[:OTHER_MAX_ENTRIES]
+            files = sorted(p for p in iter_source_files(root, {"__pycache__", "node_modules"})
+                           if visible(p) and p.resolve().is_relative_to(root.resolve()))
             matches = [p for p in files
                        if not target or target.lower() in p.name.lower()
                        or target in p.relative_to(root).as_posix()]
@@ -207,6 +210,16 @@ class SourceReaders:
             return CodeReader(root_dir=source.path, audit_logger=self.audit, config=self.config).search_code(
                 query=query, max_results=max_results)
         return self._collect("code", source_id, "matches", read)
+
+    def code_read(self, file: str, start_line: int = 1, line_count: int = 200,
+                  source_id: Optional[str] = None):
+        def read(root):
+            return {"file": file, "start_line": start_line, "line_count": line_count,
+                    "content": CodeReader(root_dir=root, audit_logger=self.audit, config=self.config).read_file(
+                        relative_path=file, start_line=start_line, line_count=line_count)}
+        if self.config.sources is None:
+            return self._clean(read(self.config.primary_code_root))
+        return self._collect("code", source_id, "documents", lambda source: read(source.path))
 
     def log_search(self, keyword: str = "", query: str = "", limit: int = 20,
                    max_results: Optional[int] = None, source_id: Optional[str] = None, **kwargs):
@@ -315,6 +328,7 @@ class SourceReaders:
 
     def tool_handlers(self):
         return {"sources_list": self.inventory, "code_search": self.code_search,
+                "code_read": self.code_read,
                 "log_search": self.log_search, "db_query": self.db_query,
                 "db_describe": self.db_describe, "db_describe_table": self.db_describe,
                 "db_list_tables": self.db_list_tables, "web_fetch": self.web_fetch,

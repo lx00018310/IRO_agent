@@ -16,6 +16,7 @@ from iro_agent.evaluation.reporter import EvalReporter
 from iro_agent.investigation.harness import InvestigationHarness
 from iro_agent.runtime.dispatcher import RuntimeDispatcher
 from iro_agent.runtime.models import RuntimeRoute
+from iro_agent.security.policy import validate_write_path
 
 
 class EvaluationRunner:
@@ -32,7 +33,7 @@ class EvaluationRunner:
         self.dataset_type = dataset_type
         self.custom_path = custom_path
         self.tool_handlers = tool_handlers
-        self.output_dir = Path(output_dir)
+        self.output_dir = validate_write_path(output_dir)
         self.dispatcher = dispatcher
 
     def run(
@@ -43,7 +44,7 @@ class EvaluationRunner:
         verbose: bool = False,
     ) -> EvalRunSummary:
         run_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        run_dir = self.output_dir / run_id
+        run_dir = validate_write_path(self.output_dir / run_id)
         run_dir.mkdir(parents=True, exist_ok=True)
 
         # 1. 加载评测集

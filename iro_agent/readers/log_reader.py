@@ -1,11 +1,11 @@
 import json
-import os
 import re
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from iro_agent.config import get_config, IROConfig
 from iro_agent.security.policy import validate_read_path
 from iro_agent.security.audit import AuditLogger
+from iro_agent.readers.limits import ReadBudget, ReadLimitError, bounded_int, iter_source_files, MAX_RESULTS
 
 
 class LogReader:
@@ -35,10 +35,7 @@ class LogReader:
         """扫描所有配置日志目录下的 .log 文件"""
         log_files = []
         for ldir in self.log_dirs:
-            for root, _, files in os.walk(ldir):
-                for f in files:
-                    if f.endswith(".log") or f.endswith(".txt"):
-                        log_files.append(Path(root) / f)
+            log_files.extend(p for p in iter_source_files(ldir) if p.suffix.lower() in {".log", ".txt"})
         return log_files
 
     def _parse_log_line(self, line: str, line_no: int, file_path: Path) -> Dict[str, Any]:
@@ -107,6 +104,7 @@ class LogReader:
         file_name_filter: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """在所有日志中执行带时间窗口、错误级别和关键字的组合过滤"""
+        bounded_int(max_results, "max_results", MAX_RESULTS)
         files = self.discover_log_files()
         if file_name_filter:
             files = [f for f in files if file_name_filter.lower() in f.name.lower()]
@@ -124,42 +122,44 @@ class LogReader:
 
         kw_lower = keyword.lower() if keyword else None
 
+        budget = ReadBudget()
         for file_path in files:
             resolved = validate_read_path(file_path, self.config)
             if not any(resolved.is_relative_to(directory.resolve()) for directory in self.log_dirs):
                 continue
             try:
-                with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-                    for line_no, line in enumerate(f, start=1):
-                        parsed = self._parse_log_line(line, line_no, file_path)
+                for line_no, line in enumerate(budget.read_text(resolved).splitlines(), start=1):
+                    parsed = self._parse_log_line(line, line_no, file_path)
 
-                        # 等级过滤
-                        if target_levels and parsed["level"] not in target_levels:
+                    # 等级过滤
+                    if target_levels and parsed["level"] not in target_levels:
+                        continue
+
+                    # 关键字过滤
+                    if kw_lower:
+                        raw_l = parsed["raw"].lower()
+                        if kw_lower in raw_l:
+                            pass
+                        elif ("拒收" in kw_lower or "物料" in kw_lower) and ("materialcall" in raw_l or "物料" in raw_l or "拒收" in raw_l):
+                            pass
+                        elif all(p in raw_l for p in kw_lower.split()):
+                            pass
+                        else:
                             continue
 
-                        # 关键字过滤
-                        if kw_lower:
-                            raw_l = parsed["raw"].lower()
-                            if kw_lower in raw_l:
-                                pass
-                            elif ("拒收" in kw_lower or "物料" in kw_lower) and ("materialcall" in raw_l or "物料" in raw_l or "拒收" in raw_l):
-                                pass
-                            elif all(p in raw_l for p in kw_lower.split()):
-                                pass
-                            else:
-                                continue
+                    # 时间窗口过滤
+                    if parsed["time"]:
+                        if start_time and parsed["time"] < start_time:
+                            continue
+                        if end_time and parsed["time"] > end_time:
+                            continue
 
-                        # 时间窗口过滤
-                        if parsed["time"]:
-                            if start_time and parsed["time"] < start_time:
-                                continue
-                            if end_time and parsed["time"] > end_time:
-                                continue
-
-                        results.append(parsed)
-                        if len(results) >= max_results:
-                            break
-            except Exception:
+                    results.append(parsed)
+                    if len(results) >= max_results:
+                        break
+            except ReadLimitError:
+                raise
+            except OSError:
                 continue
 
             if len(results) >= max_results:
@@ -176,6 +176,8 @@ class LogReader:
 
     def get_log_context(self, file_name: str, target_line_no: int, window: int = 5) -> List[Dict[str, Any]]:
         """提取指定文件某行附近的上下文行"""
+        bounded_int(target_line_no, "target_line_no", 100000)
+        bounded_int(window, "window", 100)
         files = [f for f in self.discover_log_files() if f.name == file_name]
         if not files:
             raise FileNotFoundError(f"未找到日志文件: {file_name}")
@@ -187,13 +189,12 @@ class LogReader:
         end_line = target_line_no + window
 
         context_lines = []
-        with open(target_file, "r", encoding="utf-8", errors="ignore") as f:
-            for line_no, line in enumerate(f, start=1):
-                if start_line <= line_no <= end_line:
-                    parsed = self._parse_log_line(line, line_no, target_file)
-                    parsed["is_target"] = (line_no == target_line_no)
-                    context_lines.append(parsed)
-                elif line_no > end_line:
-                    break
+        for line_no, line in enumerate(ReadBudget().read_text(target_file).splitlines(), start=1):
+            if start_line <= line_no <= end_line:
+                parsed = self._parse_log_line(line, line_no, target_file)
+                parsed["is_target"] = (line_no == target_line_no)
+                context_lines.append(parsed)
+            elif line_no > end_line:
+                break
 
         return context_lines

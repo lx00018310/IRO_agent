@@ -1,4 +1,5 @@
 import subprocess
+import re
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from iro_agent.config import get_config
@@ -33,13 +34,16 @@ class GitReader:
             )
             raise SecurityPolicyError(f"GitReader 仅允许执行只读查询操作，禁止调用 '{subcmd}'")
 
-        cmd = ["git"] + args
+        if any(arg.startswith(("--output", "--ext-diff", "--textconv")) for arg in args):
+            raise SecurityPolicyError("GitReader 禁止输出文件或调用外部差异程序")
+        cmd = ["git", "--no-optional-locks", "-c", "core.fsmonitor=false"] + args
         try:
             res = subprocess.run(
                 cmd,
                 cwd=str(self.repo_dir),
                 capture_output=True,
                 check=False,
+                timeout=10,
             )
             # 兼容 Windows GBK / UTF-8
             stdout = res.stdout.decode("utf-8", errors="replace")
@@ -88,12 +92,20 @@ class GitReader:
 
     def show_commit(self, commit_hash: str) -> str:
         """查看指定提交的完整详情与 diff"""
-        safe_hash = commit_hash.strip().replace(";", "").replace("&", "")
-        return self._run_git_readonly(["show", safe_hash])
+        return self._run_git_readonly(["show", "--no-ext-diff", "--no-textconv", self._resolve_commit(commit_hash), "--"])
+
+    def _resolve_commit(self, value: str) -> str:
+        if not isinstance(value, str) or not value or value.startswith("-") or any(c.isspace() for c in value):
+            raise SecurityPolicyError("版本参数必须是有效的本地提交或引用，不能传入 Git 选项")
+        resolved = self._run_git_readonly(["rev-parse", "--verify", "--end-of-options", value + "^{commit}"]).strip()
+        if not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", resolved):
+            raise SecurityPolicyError("版本参数未解析为有效提交")
+        return resolved
 
     def get_diff(self, commit_a: str, commit_b: str = "HEAD") -> str:
         """查看两个 commit 之间的差异"""
-        return self._run_git_readonly(["diff", commit_a.strip(), commit_b.strip()])
+        return self._run_git_readonly(["diff", "--no-ext-diff", "--no-textconv",
+                                       self._resolve_commit(commit_a), self._resolve_commit(commit_b), "--"])
 
     def get_blame(self, file_path: str, start_line: int = 1, end_line: int = 50) -> str:
         """查看指定代码片段的作者与提交溯源"""

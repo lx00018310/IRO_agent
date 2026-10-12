@@ -23,7 +23,7 @@ def test_git_reader_task013():
         reader._run_git_readonly(["commit", "-m", "test"])
 
 
-def test_code_reader_task013():
+def test_code_reader_task013(reader_project):
     config = get_config()
     if not Path(config.project_root).exists():
         pytest.skip("TASK-013 物理路径不存在，跳过代码测试")
@@ -40,7 +40,7 @@ def test_code_reader_task013():
     assert "file" in results[0]
 
 
-def test_wrelease_reader_task013():
+def test_wrelease_reader_task013(reader_project):
     config = get_config()
     if not Path(config.wrelease_dir).exists():
         pytest.skip("WRelease 物理路径不存在，跳过测试")

@@ -56,9 +56,7 @@ class InvestigationHarness:
         self.audit = audit_logger or AuditLogger()
         self.memory_store = IncidentStore()
         self.learning_store = LearningMemoryStore()
-        self.knowledge_store = ProjectKnowledgeStore(
-            base_dir=Path(self.config.project_root) if Path(self.config.project_root).exists() else Path.cwd()
-        )
+        self.knowledge_store = ProjectKnowledgeStore(config=self.config)
         self.lookup_engine = ProjectLookupEngine(store=self.knowledge_store)
         self.orchestrator = DiagnosticOrchestrator(audit_logger=self.audit)
 
@@ -168,6 +166,7 @@ class InvestigationHarness:
             "config_lookup": config_lookup_adapter,
             "project_lookup": project_lookup_adapter,
             "code_search": code_search_adapter,
+            "code_read": readers.code_read,
             "version_current": version_current_adapter,
             "web_fetch": web_fetch_adapter,
             "other_read": other_read_adapter,

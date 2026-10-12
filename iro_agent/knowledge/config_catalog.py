@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 from iro_agent.knowledge.models import ConfigItem, ConfigPriorityRule
 from iro_agent.security.redactor import SecretRedactor
+from iro_agent.readers.limits import ReadBudget, ReadLimitError
 
 
 class ConfigCatalogScanner:
@@ -15,6 +16,7 @@ class ConfigCatalogScanner:
 
     def __init__(self, root_dir: Path):
         self.root_dir = Path(root_dir)
+        self.read_budget = ReadBudget()
 
     def scan(self, max_files: int = 200, max_items_per_file: int = 100) -> tuple[List[ConfigItem], List[ConfigPriorityRule]]:
         """全量遍历扫描配置目录与配置项"""
@@ -38,6 +40,8 @@ class ConfigCatalogScanner:
             try:
                 items = self._parse_config_file(file_path, max_items_per_file)
                 catalog.extend(items)
+            except ReadLimitError:
+                raise
             except Exception:
                 continue
 
@@ -56,7 +60,9 @@ class ConfigCatalogScanner:
         ext = file_path.suffix.lower()
 
         try:
-            raw_text = file_path.read_text(encoding="utf-8", errors="ignore")
+            raw_text = self.read_budget.read_text(file_path)
+        except ReadLimitError:
+            raise
         except Exception:
             return []
 

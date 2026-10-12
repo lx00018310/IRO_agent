@@ -1,3 +1,4 @@
+from iro_agent.config import get_config
 import tempfile
 import json
 from pathlib import Path
@@ -14,6 +15,7 @@ from iro_agent.knowledge.lookup import ProjectLookupEngine
 
 def test_knowledge_store_roundtrip():
     with tempfile.TemporaryDirectory() as tmpdir:
+        get_config().project_root = tmpdir
         store = ProjectKnowledgeStore(base_dir=Path(tmpdir))
         assert not store.exists()
         assert store.load_blueprint() is None
@@ -85,6 +87,7 @@ def test_knowledge_store_roundtrip():
 
 def test_knowledge_override():
     with tempfile.TemporaryDirectory() as tmpdir:
+        get_config().project_root = tmpdir
         store = ProjectKnowledgeStore(base_dir=Path(tmpdir))
         bp = ProjectBlueprint(
             project=ProjectMetadata(

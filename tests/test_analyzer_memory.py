@@ -1,3 +1,4 @@
+from iro_agent.config import get_config
 import tempfile
 from pathlib import Path
 from iro_agent.memory.incident_store import IncidentStore
@@ -9,7 +10,8 @@ from iro_agent.analyzer.interpreter import BusinessLanguageInterpreter
 
 def test_incident_memory():
     with tempfile.TemporaryDirectory() as tmp_dir:
-        db_path = Path(tmp_dir) / "test_memory.db"
+        get_config().project_root = tmp_dir
+        db_path = Path(tmp_dir) / ".iro_agent" / "test_memory.db"
         store = IncidentStore(str(db_path))
 
         inc_id = store.record_incident({
@@ -103,7 +105,7 @@ def test_interpreter_rendering():
     assert "ECONNRESET" in report
 
 
-def test_diagnostic_orchestrator():
+def test_diagnostic_orchestrator(reader_project):
     """验证 DiagnosticOrchestrator 编排器能完整输出时间线、故障域与影响范围"""
     from iro_agent.analyzer.orchestrator import DiagnosticOrchestrator
 

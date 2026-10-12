@@ -69,7 +69,7 @@ def test_pure_llm_confidence_downgrade(tmp_path):
 
 
 def test_incident_memory_verification_prioritization(tmp_path):
-    db_file = tmp_path / "test_memory.db"
+    db_file = tmp_path / ".iro_agent" / "test_memory.db"
     store = IncidentStore(db_path=str(db_file))
 
     # 写入一个仅有 Agent 自动诊断的未验证记录
@@ -104,7 +104,7 @@ def test_incident_memory_verification_prioritization(tmp_path):
 
 
 def test_learning_memory_anti_pollution(tmp_path):
-    db_file = tmp_path / "test_learning.db"
+    db_file = tmp_path / ".iro_agent" / "test_learning.db"
     store = LearningMemoryStore(db_path=str(db_file))
 
     store.save_rule({

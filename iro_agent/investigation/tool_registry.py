@@ -115,6 +115,12 @@ class ToolRegistry:
         if tool_name == "code_search":
             if not any(k in args for k in ("query", "keyword", "symbol")):
                 return False, "code_search 必须提供 'query' 参数"
+        if tool_name == "code_read":
+            if not isinstance(args.get("file"), str) or not args["file"]:
+                return False, "code_read 必须提供非空的相对文件路径 file"
+            for key, maximum in (("start_line", 100000), ("line_count", 500)):
+                if key in args and (type(args[key]) is not int or not 1 <= args[key] <= maximum):
+                    return False, f"{key} 超过允许范围"
 
         # 8. 针对 web_fetch 的参数校验
         if tool_name == "web_fetch":
@@ -156,7 +162,7 @@ class ToolRegistry:
         ))
         self.register(ToolSpec(
             name="db_query",
-            description="分别只读查询已登记 PostgreSQL 数据库；结果按来源标识，不支持跨库 JOIN",
+            description="分别只读查询已登记 PostgreSQL/MySQL 数据库；结果按来源标识，不支持跨库 JOIN",
             parameters_schema={"sql": "str, 必填, 仅允许只读 SELECT 语句", "source_id": "str, 选填，精确选择数据库"},
             tier=EvidenceTier.TIER_1A_RUNTIME_DIGITAL,
         ))
@@ -188,6 +194,13 @@ class ToolRegistry:
             name="code_search",
             description="在本地工程源码中只读检索类名、方法名或关键逻辑",
             parameters_schema={"query": "str, 必填, 代码或符号关键字", "source_id": "str, 选填，精确选择代码来源"},
+            tier=EvidenceTier.TIER_1B_STATIC_FACTS,
+        ))
+        self.register(ToolSpec(
+            name="code_read",
+            description="只读分段阅读源码或文本配置（支持 C#）；返回行号，不能越出指定来源",
+            parameters_schema={"file": "str, 必填, 来源内相对路径", "start_line": "int, 1..100000",
+                               "line_count": "int, 1..500", "source_id": "str, 选填"},
             tier=EvidenceTier.TIER_1B_STATIC_FACTS,
         ))
         self.register(ToolSpec(

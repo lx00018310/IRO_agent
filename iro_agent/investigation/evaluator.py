@@ -180,7 +180,9 @@ class EvidenceEvaluator:
         provenance = {"tool": step.tool, "step_id": step.step_id, "verdict": eval_res.verdict}
         if isinstance(tool_output, dict) and isinstance(tool_output.get("sources"), list):
             from iro_agent.readers.sources import summarize_source_output
-            provenance["source_results"] = summarize_source_output(tool_output)
+            from iro_agent.readers.limits import MAX_OUTPUT_CHARS
+            provenance["source_results"] = summarize_source_output(tool_output,
+                preview_chars=MAX_OUTPUT_CHARS if step.tool == "code_read" else 1200)
 
         return EvidenceRecord(
             evidence_id=f"EV_{step.step_id}",

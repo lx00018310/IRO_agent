@@ -5,6 +5,7 @@ import shutil
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from iro_agent.config import get_config, IROConfig
+from iro_agent.security.policy import agent_data_dir, validate_write_path
 from iro_agent.knowledge.models import (
     ProjectBlueprint,
     BusinessConcept,
@@ -20,8 +21,7 @@ class ProjectKnowledgeStore:
     def __init__(self, base_dir: Optional[Path] = None, config: Optional[IROConfig] = None):
         self.config = config or get_config()
         # 优先以项目根目录或运行根目录下的 .iro_agent 为存储目录
-        root = base_dir or (Path(self.config.project_root) if self.config.project_root and Path(self.config.project_root).exists() else Path.cwd())
-        self.store_dir = root / ".iro_agent"
+        self.store_dir = validate_write_path(Path(base_dir) / ".iro_agent", self.config) if base_dir else agent_data_dir(self.config)
         self.store_dir.mkdir(parents=True, exist_ok=True)
         self.blueprint_path = self.store_dir / "project_blueprint.json"
         self.markdown_path = self.store_dir / "project_blueprint.md"
@@ -63,19 +63,19 @@ class ProjectKnowledgeStore:
         """在更新前将当前蓝图备份到历史目录"""
         if not self.blueprint_path.exists():
             return None
-        self.history_dir.mkdir(parents=True, exist_ok=True)
+        validate_write_path(self.history_dir, self.config).mkdir(parents=True, exist_ok=True)
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         backup_file = self.history_dir / f"project_blueprint_{timestamp}.json"
-        shutil.copy2(self.blueprint_path, backup_file)
+        shutil.copy2(self.blueprint_path, validate_write_path(backup_file, self.config))
         return backup_file
 
     def save_blueprint(self, blueprint: ProjectBlueprint, export_markdown: bool = True) -> None:
         """持久化项目蓝图为 JSON 并可读导出为 Markdown"""
         self.backup_blueprint()
-        self.store_dir.mkdir(parents=True, exist_ok=True)
+        validate_write_path(self.store_dir, self.config).mkdir(parents=True, exist_ok=True)
 
         # 保存 JSON
-        with open(self.blueprint_path, "w", encoding="utf-8") as f:
+        with open(validate_write_path(self.blueprint_path, self.config), "w", encoding="utf-8") as f:
             json.dump(blueprint.model_dump(), f, ensure_ascii=False, indent=2)
 
         self._cached_blueprint = blueprint
@@ -213,7 +213,7 @@ class ProjectKnowledgeStore:
                 apis = ", ".join(ext.related_apis) or "-"
                 lines.append(f"| {ext.system_name} | `{ext.connection_type}` | {ext.used_by_module} | {apis} |")
 
-        with open(self.markdown_path, "w", encoding="utf-8") as f:
+        with open(validate_write_path(self.markdown_path, self.config), "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
 
 

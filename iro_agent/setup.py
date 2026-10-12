@@ -159,8 +159,9 @@ class SetupWizard:
             data["path"] = self.directory("目录路径")
             model = DirectorySourceConfig
         elif kind == "databases":
-            self.print("当前支持 PostgreSQL，请使用只读数据库账号。")
-            data.update(host=self.ask("数据库地址", required=True), port=self.ask("端口", "5432"),
+            self.print("支持 PostgreSQL / MySQL，请使用仅有查询权限的数据库账号。")
+            data["type"] = self.ask("数据库类型（postgresql/mysql）", "postgresql")
+            data.update(host=self.ask("数据库地址", required=True), port=self.ask("端口", "3306" if data["type"] == "mysql" else "5432"),
                         database=self.ask("数据库名", required=True), user=self.ask("只读账号", required=True),
                         password_env=self.ask("密码环境变量名（留空则输入密码）"))
             if not data["password_env"]:
@@ -215,9 +216,6 @@ class SetupWizard:
         original = self.path.read_bytes() if self.path.is_file() else None
         raw = read_config_data(self.path) if original is not None else {}
         config = IROConfig(**raw)
-        if not raw:
-            config.storage.audit_db_path = (self.path.parent / "iro_agent_audit.db").as_posix()
-            config.storage.memory_db_path = (self.path.parent / "iro_agent_memory.db").as_posix()
         sources = config.sources if config.sources is not None else self.import_legacy(config)
         self.print("\n[1/4] 项目与工作目录")
         config.project_name = self.ask("项目名称", config.project_name, True)

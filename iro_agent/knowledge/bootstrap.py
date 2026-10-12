@@ -2,6 +2,7 @@ import time
 from pathlib import Path
 from typing import Optional, Dict, Any
 from iro_agent.config import IROConfig, get_config
+from iro_agent.security.policy import validate_write_path
 from iro_agent.knowledge.tree_scanner import TreeScanner
 from iro_agent.knowledge.schema_scanner import SchemaScanner
 from iro_agent.knowledge.code_scanner import TargetedCodeScanner
@@ -20,7 +21,7 @@ class ProjectKnowledgeBootstrapper:
     def __init__(self, config: Optional[IROConfig] = None):
         self.config = config or get_config()
         self.project_root = Path(self.config.project_root)
-        self.store = ProjectKnowledgeStore(base_dir=self.project_root if self.project_root.exists() else Path.cwd(), config=self.config)
+        self.store = ProjectKnowledgeStore(config=self.config)
 
     def run_bootstrap(
         self,
@@ -136,7 +137,7 @@ class ProjectKnowledgeBootstrapper:
 
         report_md = BootstrapReportGenerator.generate(sanitized_bp)
         report_path = self.store.store_dir / "bootstrap_report.md"
-        with open(report_path, "w", encoding="utf-8") as rf:
+        with open(validate_write_path(report_path, self.config), "w", encoding="utf-8") as rf:
             rf.write(report_md)
 
         cost_time = time.time() - t0

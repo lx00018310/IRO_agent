@@ -18,9 +18,14 @@ def mock_glm_client():
     return client
 
 
+@pytest.fixture(autouse=True)
+def no_external_reactions(monkeypatch):
+    monkeypatch.setattr(FeishuGateway, "add_reaction", MagicMock(return_value=True))
+
+
 @pytest.fixture
-def sample_config():
-    cfg = IROConfig()
+def sample_config(tmp_path):
+    cfg = IROConfig(project_root=str(tmp_path))
     cfg.feishu.app_id = "cli_mock_app_12345"
     cfg.feishu.app_secret = "mock_secret_abcdef123456"
     cfg.feishu.receive_group_at = True
@@ -37,7 +42,7 @@ def test_01_gateway_startup_and_health(sample_config):
     assert health["app_secret_configured"] is True
 
     # 测试凭证缺失时拒绝启动
-    no_cred_cfg = IROConfig()
+    no_cred_cfg = IROConfig(project_root=sample_config.project_root)
     no_cred_cfg.feishu.app_id = ""
     no_cred_cfg.feishu.app_secret = ""
     bad_gw = FeishuGateway(config=no_cred_cfg)
@@ -47,7 +52,7 @@ def test_01_gateway_startup_and_health(sample_config):
 
 def test_02_private_text_message(sample_config, mock_glm_client, tmp_path):
     """Test 2: 私聊文本解析与回复"""
-    dedup_db = str(tmp_path / "test_dedup.db")
+    dedup_db = str(tmp_path / ".iro_agent" / "test_dedup.db")
     gw = FeishuGateway(config=sample_config, glm_client=mock_glm_client, dedup_db_path=dedup_db)
     gw.send_message = MagicMock(return_value=True)
 
@@ -83,7 +88,7 @@ def test_02_private_text_message(sample_config, mock_glm_client, tmp_path):
 
 def test_03_group_without_at_or_at_others_ignored(sample_config, mock_glm_client, tmp_path):
     """Test 3: 群聊无 @ 或 @他人 (如 @张三) 必须严格静默忽略 (P0)"""
-    dedup_db = str(tmp_path / "test_dedup.db")
+    dedup_db = str(tmp_path / ".iro_agent" / "test_dedup.db")
     gw = FeishuGateway(config=sample_config, glm_client=mock_glm_client, dedup_db_path=dedup_db)
     gw.send_message = MagicMock()
 
@@ -131,7 +136,7 @@ def test_03_group_without_at_or_at_others_ignored(sample_config, mock_glm_client
 
 def test_04_group_with_at_cleaned(sample_config, mock_glm_client, tmp_path):
     """Test 4: 群聊 @ 消息正确剥离 mention 并响应"""
-    dedup_db = str(tmp_path / "test_dedup.db")
+    dedup_db = str(tmp_path / ".iro_agent" / "test_dedup.db")
     gw = FeishuGateway(config=sample_config, glm_client=mock_glm_client, dedup_db_path=dedup_db)
     gw.send_message = MagicMock(return_value=True)
 
@@ -169,7 +174,7 @@ def test_04_group_with_at_cleaned(sample_config, mock_glm_client, tmp_path):
 
 def test_05_followup_multiturn_session(sample_config, mock_glm_client, tmp_path):
     """Test 5: 多轮对话上下文保持"""
-    dedup_db = str(tmp_path / "test_dedup.db")
+    dedup_db = str(tmp_path / ".iro_agent" / "test_dedup.db")
     gw = FeishuGateway(config=sample_config, glm_client=mock_glm_client, dedup_db_path=dedup_db)
     gw.send_message = MagicMock(return_value=True)
 
@@ -218,11 +223,11 @@ def test_05_followup_multiturn_session(sample_config, mock_glm_client, tmp_path)
 
 def test_06_image_two_phase_association_and_cleanup(sample_config, mock_glm_client, tmp_path):
     """Test 6: 现场图片两阶段交互（先在群发图暂存、随后文字提问关联消费）及即用即删生命周期 (P1)"""
-    dedup_db = str(tmp_path / "test_dedup.db")
+    dedup_db = str(tmp_path / ".iro_agent" / "test_dedup.db")
     gw = FeishuGateway(config=sample_config, glm_client=mock_glm_client, dedup_db_path=dedup_db)
     gw.send_message = MagicMock(return_value=True)
 
-    dummy_img = tmp_path / "test_two_phase.png"
+    dummy_img = tmp_path / ".iro_agent" / "test_two_phase.png"
     dummy_img.write_bytes(b"\x89PNG\r\n\x1a\nfake_image_data")
     gw.download_resource = MagicMock(return_value=str(dummy_img))
 
@@ -281,7 +286,7 @@ def test_06_image_two_phase_association_and_cleanup(sample_config, mock_glm_clie
 
 def test_07_stateful_dedup_and_failure_retry(sample_config, mock_glm_client, tmp_path):
     """Test 7: 状态化去重与失败重试机制 (P0: 失败不丢消息，成功后幂等防重)"""
-    dedup_db = str(tmp_path / "test_dedup.db")
+    dedup_db = str(tmp_path / ".iro_agent" / "test_dedup.db")
     gw = FeishuGateway(config=sample_config, glm_client=mock_glm_client, dedup_db_path=dedup_db)
 
     # 1. 模拟首次投递，但发送失败（如飞书网络抖动）
@@ -320,7 +325,7 @@ def test_07_stateful_dedup_and_failure_retry(sample_config, mock_glm_client, tmp
 
 def test_08_secret_leakage_protection(sample_config, mock_glm_client, tmp_path):
     """Test 8: 凭据隔离与敏感信息绝不外泄"""
-    dedup_db = str(tmp_path / "test_dedup.db")
+    dedup_db = str(tmp_path / ".iro_agent" / "test_dedup.db")
     gw = FeishuGateway(config=sample_config, glm_client=mock_glm_client, dedup_db_path=dedup_db)
     gw.send_message = MagicMock(return_value=True)
 
@@ -381,7 +386,7 @@ def test_09_http_gateway_arbitrary_path_rejection():
 
 def test_10_reaction_emoji_on_message(sample_config, mock_glm_client, tmp_path):
     """Test 10: 收到提问消息时自动调用 add_reaction 添加 OK 表情确认"""
-    dedup_db = str(tmp_path / "test_dedup_rx.db")
+    dedup_db = str(tmp_path / ".iro_agent" / "test_dedup_rx.db")
     gw = FeishuGateway(config=sample_config, glm_client=mock_glm_client, dedup_db_path=dedup_db)
     gw.send_message = MagicMock(return_value=True)
     gw.add_reaction = MagicMock(return_value=True)
@@ -409,9 +414,9 @@ def test_10_reaction_emoji_on_message(sample_config, mock_glm_client, tmp_path):
     gw.send_message.assert_called_once()
 
 
-def test_feishu_gateway_reaction_event_silent_ack():
+def test_feishu_gateway_reaction_event_silent_ack(tmp_path):
     """验证飞书网关对 reaction 创建和删除事件的静默吞吐，杜绝 SDK processor not found 报错"""
-    cfg = IROConfig()
+    cfg = IROConfig(project_root=str(tmp_path))
     cfg.feishu.app_id = "cli_test_app_id"
     cfg.feishu.app_secret = "test_secret"
     gw = FeishuGateway(config=cfg)

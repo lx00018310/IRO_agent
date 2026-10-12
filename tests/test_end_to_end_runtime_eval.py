@@ -66,7 +66,7 @@ def test_eval_runner_routes_through_runtime_dispatcher(tmp_path):
         runner = EvaluationRunner(
             dataset_type="external",
             custom_path=str(tmp_path),
-            output_dir=str(tmp_path / "runs"),
+            output_dir=str(tmp_path / ".iro_agent" / "runs"),
         )
         summary = runner.run()
 
@@ -112,7 +112,7 @@ def test_eval_runner_supports_injected_dispatcher(tmp_path):
     runner = EvaluationRunner(
         dataset_type="external",
         custom_path=str(tmp_path),
-        output_dir=str(tmp_path / "runs"),
+        output_dir=str(tmp_path / ".iro_agent" / "runs"),
         dispatcher=custom_dispatcher,
     )
 
@@ -145,7 +145,7 @@ def test_eval_runner_handles_dispatcher_infra_failure(tmp_path):
     runner = EvaluationRunner(
         dataset_type="external",
         custom_path=str(tmp_path),
-        output_dir=str(tmp_path / "runs"),
+        output_dir=str(tmp_path / ".iro_agent" / "runs"),
         dispatcher=custom_dispatcher,
     )
 
@@ -192,7 +192,7 @@ def test_runtime_eval_end_to_end_consistency(tmp_path):
     runner = EvaluationRunner(
         dataset_type="external",
         custom_path=str(tmp_path),
-        output_dir=str(tmp_path / "runs"),
+        output_dir=str(tmp_path / ".iro_agent" / "runs"),
         dispatcher=dispatcher_eval,
     )
     summary = runner.run()

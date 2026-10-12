@@ -4,20 +4,19 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 from iro_agent.config import get_config
 from iro_agent.security.redactor import redact_secrets
+from iro_agent.security.policy import validate_sqlite_path
 
 
 class AuditLogger:
     """内部只读诊断工具审计日志管理器 (写入私有 SQLite，保证操作可追溯)"""
 
-    def __init__(self, db_path: Optional[str] = None):
-        if db_path:
-            self.db_path = Path(db_path)
-        else:
-            self.db_path = Path(get_config().storage.audit_db_path)
+    def __init__(self, db_path: Optional[str] = None, config=None):
+        self.config = config or get_config()
+        self.db_path = validate_sqlite_path(db_path or self.config.storage.audit_db_path, self.config)
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
-        return sqlite3.connect(str(self.db_path))
+        return sqlite3.connect(str(validate_sqlite_path(self.db_path, self.config)))
 
     def _init_db(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
