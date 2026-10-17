@@ -32,7 +32,7 @@ class SchemaScanResult(BaseModel):
 
 
 class SchemaScanner:
-    """PostgreSQL 数据库元数据只读探测器 (基于 information_schema)"""
+    """数据库元数据只读探测器 (PostgreSQL / MySQL / SQL Server，基于 information_schema)"""
 
     def __init__(self, db_config: Optional[DatabaseConfig] = None, audit_logger: Optional[AuditLogger] = None):
         self.config = get_config()
@@ -44,14 +44,15 @@ class SchemaScanner:
         """执行严格只读元数据采集，获取所有用户表、字段、主键与注释"""
         if not self.db_cfg or not self.db_cfg.host or not self.db_cfg.database:
             return SchemaScanResult(connected=False, error="数据库配置为空或未启用")
-        target_schema = target_schema or (self.db_cfg.database if self.db_cfg.type == "mysql" else "public")
+        target_schema = target_schema or self.reader.default_schema()
+        placeholder = "?" if self.db_cfg.type == "sqlserver" else "%s"
 
         try:
             # 1. 探查所有用户基表
-            tables_sql = """
+            tables_sql = f"""
             SELECT table_name AS table_name
             FROM information_schema.tables
-            WHERE table_schema = %s AND table_type = 'BASE TABLE'
+            WHERE table_schema = {placeholder} AND table_type = 'BASE TABLE'
             ORDER BY table_name;
             """
             table_rows = self.reader.execute_query(tables_sql, params=(target_schema,), max_rows=200)
@@ -61,7 +62,7 @@ class SchemaScanner:
             table_names = [r["table_name"] for r in table_rows]
 
             # 2. 探查主键
-            pk_sql = """
+            pk_sql = f"""
             SELECT tc.table_name AS table_name, kcu.column_name AS column_name
             FROM information_schema.table_constraints tc
             JOIN information_schema.key_column_usage kcu
@@ -69,17 +70,17 @@ class SchemaScanner:
               AND tc.table_schema = kcu.table_schema
               AND tc.table_name = kcu.table_name
             WHERE tc.constraint_type = 'PRIMARY KEY'
-              AND tc.table_schema = %s;
+              AND tc.table_schema = {placeholder};
             """
             pk_rows = self.reader.execute_query(pk_sql, params=(target_schema,), max_rows=500)
             pk_map: Dict[str, str] = {r["table_name"]: r["column_name"] for r in pk_rows}
 
             # 3. 探查字段列表与类型
-            cols_sql = """
+            cols_sql = f"""
             SELECT table_name AS table_name, column_name AS column_name,
                    data_type AS data_type, is_nullable AS is_nullable
             FROM information_schema.columns
-            WHERE table_schema = %s
+            WHERE table_schema = {placeholder}
             ORDER BY table_name, ordinal_position;
             """
             col_rows = self.reader.execute_query(cols_sql, params=(target_schema,), max_rows=2000)

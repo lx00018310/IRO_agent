@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class DatabaseConfig(BaseModel):
-    type: Literal["postgresql", "mysql"] = "postgresql"
+    type: Literal["postgresql", "mysql", "sqlserver"] = "postgresql"
     host: str = ""
     port: int = 5432
     user: str = ""
@@ -17,12 +17,18 @@ class DatabaseConfig(BaseModel):
     database: str = ""
     connect_timeout: int = 5
     query_timeout: int = Field(default=10, ge=1, le=60)
+    # SQL Server only
+    odbc_driver: str = "ODBC Driver 18 for SQL Server"
+    db_schema: str = "dbo"
+    trust_server_certificate: bool = False
 
     @model_validator(mode="before")
     @classmethod
     def default_port(cls, data):
-        if isinstance(data, dict) and data.get("type") == "mysql" and "port" not in data:
-            return {**data, "port": 3306}
+        if isinstance(data, dict) and "port" not in data:
+            defaults = {"mysql": 3306, "sqlserver": 1433}
+            default = defaults.get(data.get("type"), 5432)
+            return {**data, "port": default}
         return data
 
 
@@ -99,6 +105,13 @@ class DatabaseSourceConfig(DatabaseConfig, SourceConfig):
     password_env: str = ""
 
     _env_name = field_validator("password_env")(validate_env_name)
+
+    @field_validator("odbc_driver")
+    @classmethod
+    def validate_odbc_driver(cls, value: str) -> str:
+        if value and value not in ("ODBC Driver 18 for SQL Server", "ODBC Driver 17 for SQL Server"):
+            raise ValueError("odbc_driver 仅支持 'ODBC Driver 18 for SQL Server' 或 'ODBC Driver 17 for SQL Server'")
+        return value
 
     def connection_config(self) -> DatabaseConfig:
         data = self.model_dump(include=set(DatabaseConfig.model_fields))
@@ -214,11 +227,17 @@ class IROConfig(BaseModel):
             return self.sources.code[0].path if self.sources.code else ""
         return self.project_root
 
+    # SQL Server 专属字段；加入前旧配置不含它们，指纹计算须对非 SQL Server 来源排除，避免旧项目失效。
+    _SQLSERVER_ONLY_FIELDS = {"odbc_driver", "db_schema", "trust_server_certificate"}
+
     def setup_fingerprint(self) -> str:
         sources = self.sources.model_dump() if self.sources is not None else None
         if sources:
             for db in sources["databases"]:
                 db.pop("password", None)
+                if db.get("type") != "sqlserver":
+                    for field in self._SQLSERVER_ONLY_FIELDS:
+                        db.pop(field, None)
         payload = {
             "project_name": self.project_name, "project_root": self.project_root,
             "wrelease_dir": self.wrelease_dir, "allowed_paths": self.allowed_paths,

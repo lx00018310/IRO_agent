@@ -85,6 +85,8 @@ class SourceReaders:
                     item["path"] = source.path
                 elif kind == "databases":
                     item.update(type=source.type, host=source.host, port=source.port, database=source.database)
+                    if source.type == "sqlserver":
+                        item["db_schema"] = source.db_schema
                 elif kind == "other":
                     item["path"] = source.path
                 else:

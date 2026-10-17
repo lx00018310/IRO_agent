@@ -4,7 +4,7 @@
 
 > **IRO_agent is an evidence-driven, strictly read-only diagnostic AI agent for industrial software systems.** It learns a project's operational model, investigates incidents through iterative evidence gathering, and scores the quality of its own diagnosis using reproducible evaluation datasets.
 
-[![Tests](https://img.shields.io/badge/tests-272%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-338%20passed-brightgreen.svg)]()
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Security](https://img.shields.io/badge/boundary-Strict%20Read--Only-red.svg)]()
 
@@ -185,7 +185,7 @@ playwright install chromium
 
 ### 2. First run: complete the project configuration wizard (required)
 
-One IRO_agent instance manages exactly one project; a project may span multiple code directories, PostgreSQL/MySQL databases, log directories, read-only HTTP endpoints, and "other" material sources (any local read-only files or folders: API/interface documents, data dictionaries, exported JSON/CSV, READMEs, etc.). There is no need to copy a sample file or hand-edit JSON first:
+One IRO_agent instance manages exactly one project; a project may span multiple code directories, PostgreSQL/MySQL/SQL Server databases, log directories, read-only HTTP endpoints, and "other" material sources (any local read-only files or folders: API/interface documents, data dictionaries, exported JSON/CSV, READMEs, etc.). There is no need to copy a sample file or hand-edit JSON first:
 
 ```powershell
 python -m iro_agent.cli setup
@@ -224,7 +224,7 @@ python -m iro_agent.cli setup
 
 For a database source, fill in the password environment variable `ORDERS_DB_PASSWORD`; for an HTTP source, add the request header `Authorization` referencing `WES_AUTHORIZATION`. These variables should be set in the same process environment that runs IRO; a temporary PowerShell variable is not automatically passed to another double-click-launched window. The wizard never writes environment-variable credential values into JSON. The model key can be skipped to use `init --static-only`; online Q&A and diagnosis still require valid model credentials.
 
-At query time, the model receives the source ID, type, purpose, and location. Code, log, and database tools can select a source precisely by `source_id`; when omitted, they read all sources of that type, and both the returned results and failed items keep their source IDs. For example, you can ask: "search all code directories for 'dispatch'", "view the task status of the business DB and the scheduling DB separately", or "only query the task table in db-wes". PostgreSQL and MySQL are supported; cross-database queries execute the SQL separately and do not support cross-database SQL JOIN. The version tool continues to use the first code source as the source-for-version, and keeps an optional WRelease delivery-version source.
+At query time, the model receives the source ID, type, purpose, and location. Code, log, and database tools can select a source precisely by `source_id`; when omitted, they read all sources of that type, and both the returned results and failed items keep their source IDs. For example, you can ask: "search all code directories for 'dispatch'", "view the task status of the business DB and the scheduling DB separately", or "only query the task table in db-wes". PostgreSQL, MySQL, and SQL Server are supported; cross-database queries execute the SQL separately and do not support cross-database SQL JOIN. The version tool continues to use the first code source as the source-for-version, and keeps an optional WRelease delivery-version source. See [SQL Server setup notes](docs/261017_SQLServer_ReadOnly.md) for the ODBC driver prerequisite, default ports, schema, certificate handling, and per-dialect query syntax.
 
 HTTP sources register **exact read-only GET endpoints**, including fixed query parameters; other URLs, dynamically appended paths, redirects, browser operations, or form logins are not accepted. Multiple endpoints can be registered one by one and read uniformly. Source checks can be explicitly skipped in the wizard; when a check fails, saving is allowed only if you explicitly choose to keep it. At runtime, if some sources are unavailable, existing results and observation gaps are returned together rather than being treated as zero records or "no anomaly"; a fault investigation can specify available sources for further verification.
 
@@ -271,7 +271,7 @@ Evaluation reports and trajectory replays are generated automatically at `<proje
 pytest -q
 ```
 
-The current local full test suite reports **272 tests passing**, covering the configuration wizard (including "other" material sources), multi-source reads, source isolation, and regression validation. On-site data-source connectivity and online model services still need to be verified in the actual runtime environment.
+The current local full test suite reports **338 tests passing** (plus 1 skip), covering the configuration wizard (including "other" material sources), multi-source reads, SQL Server read-only access, GLM chat finalization, source isolation, and regression validation. On-site data-source connectivity, online model services, and real SQL Server connections still need to be verified in the actual runtime environment.
 
 ### 7. Industrial PC version update & quick launch
 
@@ -361,4 +361,4 @@ This project is licensed under the MIT License.
 
 Machine-readable metadata (JSON-LD / Schema.org) with the canonical name, description, keywords, and GitHub About/topics is available at [`docs/METADATA.json`](docs/METADATA.json).
 
-[Runtime write boundary, C# text reading and MySQL setup (Chinese)](docs/261012_Readonly_CSharp_MySQL.md)
+[Runtime write boundary, C# text reading and MySQL setup (Chinese)](docs/261012_Readonly_CSharp_MySQL.md) · [SQL Server read-only access (Chinese)](docs/261017_SQLServer_ReadOnly.md)

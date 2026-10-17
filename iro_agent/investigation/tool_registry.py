@@ -162,7 +162,7 @@ class ToolRegistry:
         ))
         self.register(ToolSpec(
             name="db_query",
-            description="分别只读查询已登记 PostgreSQL/MySQL 数据库；结果按来源标识，不支持跨库 JOIN",
+            description="分别只读查询已登记 PostgreSQL/MySQL/SQL Server 数据库；结果按来源标识，不支持跨库 JOIN。按来源类型使用方言：PG/MySQL 用 LIMIT，SQL Server 用 SELECT TOP (N) ... ORDER BY，不支持 EXPLAIN",
             parameters_schema={"sql": "str, 必填, 仅允许只读 SELECT 语句", "source_id": "str, 选填，精确选择数据库"},
             tier=EvidenceTier.TIER_1A_RUNTIME_DIGITAL,
         ))

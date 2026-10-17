@@ -159,11 +159,18 @@ class SetupWizard:
             data["path"] = self.directory("目录路径")
             model = DirectorySourceConfig
         elif kind == "databases":
-            self.print("支持 PostgreSQL / MySQL，请使用仅有查询权限的数据库账号。")
-            data["type"] = self.ask("数据库类型（postgresql/mysql）", "postgresql")
-            data.update(host=self.ask("数据库地址", required=True), port=self.ask("端口", "3306" if data["type"] == "mysql" else "5432"),
+            self.print("支持 PostgreSQL / MySQL / SQL Server，请使用仅有查询权限的数据库账号。")
+            data["type"] = self.ask("数据库类型（postgresql/mysql/sqlserver）", "postgresql")
+            default_port = {"mysql": "3306", "sqlserver": "1433"}.get(data["type"], "5432")
+            data.update(host=self.ask("数据库地址", required=True), port=self.ask("端口", default_port),
                         database=self.ask("数据库名", required=True), user=self.ask("只读账号", required=True),
                         password_env=self.ask("密码环境变量名（留空则输入密码）"))
+            if data["type"] == "sqlserver":
+                data["db_schema"] = self.ask("Schema（默认 dbo）", "dbo")
+                driver = self.ask("ODBC 驱动（默认 ODBC Driver 18，需已安装；17 需手动输入完整名称）", "ODBC Driver 18 for SQL Server")
+                if driver:
+                    data["odbc_driver"] = driver
+                data["trust_server_certificate"] = self.yes("服务器使用自签名证书，是否显式信任证书（默认不信任）", False)
             if not data["password_env"]:
                 data["password"] = self.secret_value("数据库密码")
             model = DatabaseSourceConfig

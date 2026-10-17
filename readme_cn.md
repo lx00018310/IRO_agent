@@ -4,7 +4,7 @@
 
 > **IRO_agent 是一个以证据驱动、严格只读的工业软件诊断 AI Agent。** 它能学习项目的运行模型，通过迭代式证据采集排查事故，并借助可复现的评测数据集对自身诊断质量进行评分。
 
-[![Tests](https://img.shields.io/badge/tests-267%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-338%20passed-brightgreen.svg)]()
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Security](https://img.shields.io/badge/boundary-Strict%20Read--Only-red.svg)]()
 
@@ -185,7 +185,7 @@ playwright install chromium
 
 ### 2. 首次运行：必须完成项目配置向导
 
-一个 IRO_agent 实例只管理一个项目；同项目支持多个代码目录、PostgreSQL/MySQL 数据库、日志目录和只读 HTTP 接口。无需先复制示例或手工编辑 JSON：
+一个 IRO_agent 实例只管理一个项目；同项目支持多个代码目录、PostgreSQL/MySQL/SQL Server 数据库、日志目录和只读 HTTP 接口。无需先复制示例或手工编辑 JSON：
 
 ```powershell
 python -m iro_agent.cli setup
@@ -224,7 +224,7 @@ python -m iro_agent.cli setup
 
 在数据库来源里填写密码环境变量 `ORDERS_DB_PASSWORD`；在 HTTP 来源里添加请求头 `Authorization`，引用 `WES_AUTHORIZATION`。这些变量应在运行 IRO 的同一个进程环境中设置；临时 PowerShell 变量不会自动传给另一个双击启动的窗口。向导不会把环境变量的凭据值写入 JSON。模型 Key 可跳过以使用 `init --static-only`；在线问答和诊断仍需要有效模型凭据。
 
-查询时模型会收到来源 ID、类型、用途和位置。代码、日志、数据库工具可用 `source_id` 精确选择来源；省略时分别读取该类所有来源，返回结果及失败项均保留来源 ID。例如可提问：「在所有代码目录中查找 dispatch」「分别查看业务库和调度库的任务状态」「只查询 db-wes 的任务表」。数据库支持 PostgreSQL 和 MySQL，跨库查询会分别执行 SQL，不支持跨数据库 SQL JOIN。版本工具继续以第一个代码来源为源码版本源，并保留可选 WRelease 交付版本源。
+查询时模型会收到来源 ID、类型、用途和位置。代码、日志、数据库工具可用 `source_id` 精确选择来源；省略时分别读取该类所有来源，返回结果及失败项均保留来源 ID。例如可提问：「在所有代码目录中查找 dispatch」「分别查看业务库和调度库的任务状态」「只查询 db-wes 的任务表」。数据库支持 PostgreSQL、MySQL 和 SQL Server，跨库查询会分别执行 SQL，不支持跨数据库 SQL JOIN。版本工具继续以第一个代码来源为源码版本源，并保留可选 WRelease 交付版本源。SQL Server 的 ODBC 驱动前置条件、默认端口、schema、证书处理与方言写法见 [SQL Server 只读接入说明](docs/261017_SQLServer_ReadOnly.md)。
 
 HTTP 来源登记的是**精确的只读 GET 端点**，包括固定查询参数；不会接受其他 URL、动态追加路径、重定向、浏览器操作或表单登录。多个接口可逐个登记并统一读取。来源检查可在向导中显式跳过；检查失败时，只有明确选择保留才允许保存。运行时部分来源不可用会同时返回已有结果和观测缺口，不会被当作零记录或无异常；故障调查可指定可用来源进一步核实。
 
@@ -359,4 +359,4 @@ IRO_agent（Industrial Read-Only Agent）是一个证据驱动的工业软件诊
 
 机器可读元数据（JSON-LD / Schema.org，含规范名称、描述、关键词与 GitHub About/主题标签）见 [`docs/METADATA.json`](docs/METADATA.json)。
 
-[运行写入边界、C# 文本阅读与 MySQL 配置](docs/261012_Readonly_CSharp_MySQL.md)
+[运行写入边界、C# 文本阅读与 MySQL 配置](docs/261012_Readonly_CSharp_MySQL.md) · [SQL Server 只读接入](docs/261017_SQLServer_ReadOnly.md)

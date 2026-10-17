@@ -31,7 +31,7 @@ SYSTEM_PROMPT = """你是工业现场只读智能诊断助手 IRO_agent。
 
 4. 【时序分析与数据新鲜度裁决】：
    - 工业诊断必须以“当前最新时刻”为基准。
-   - 查询“最新”数据时，必须根据时间字段或自增主键使用 ORDER BY ... DESC LIMIT N（如 ORDER BY id DESC）。
+   - 查询“最新”数据时，必须按来源数据库方言使用带排序的最新记录查询：PostgreSQL/MySQL 使用 ORDER BY ... DESC LIMIT N（如 ORDER BY id DESC）；SQL Server 使用 SELECT TOP (N) ... ORDER BY ... DESC（不支持 LIMIT 与 EXPLAIN）。
    - 若主状态表存在近期的有效状态，严禁将数天前的历史异步日志与当前状态混为一谈。
    - 时序先后关系不等同于直接因果关系，客观陈述事实即可，严禁无据断言。
 
@@ -309,6 +309,57 @@ class GlmClient:
                 }
         return schema
 
+    _RETRYABLE_HTTP_STATUS = (429, 500, 502, 503, 504)
+
+    @staticmethod
+    def _request_once(url: str, headers: Dict[str, Any], payload: Dict[str, Any], timeout: int):
+        """单次请求；不吞错，HTTP 状态校验与响应结构校验都在这里显式完成"""
+        resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+        if resp.status_code in (401, 403):
+            raise requests.exceptions.HTTPError(
+                f"认证失败 ({resp.status_code})，请检查模型 API Key", response=resp)
+        resp.raise_for_status()
+        try:
+            data = resp.json()
+        except ValueError as exc:
+            raise ValueError(f"模型响应不是合法 JSON: {exc}") from exc
+        if not isinstance(data, dict) or not data.get("choices"):
+            raise ValueError("模型响应缺少 choices 字段")
+        return data
+
+    @classmethod
+    def _request_with_retry(cls, url: str, headers: Dict[str, Any], payload: Dict[str, Any],
+                            timeout: int, audit: Optional["AuditLogger"] = None,
+                            operation: str = "chat_completion", max_attempts: int = 3):
+        """最多 3 次总尝试：仅超时/连接失败/429/5xx 重试；401/403 与其他 4xx 立即失败"""
+        import time
+        last_err: Optional[Exception] = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return cls._request_once(url, headers, payload, timeout)
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                last_err = e
+            except requests.exceptions.HTTPError as e:
+                status = getattr(getattr(e, "response", None), "status_code", None)
+                if status in cls._RETRYABLE_HTTP_STATUS:
+                    last_err = e
+                else:
+                    if audit:
+                        audit.record(tool_name="GlmClient", operation=operation,
+                                     result_summary=f"请求失败(HTTP {status})", status="ERROR")
+                    raise RuntimeError(redact_secrets(str(e))) from e
+            except ValueError as e:
+                last_err = e
+            if audit:
+                audit.record(tool_name="GlmClient", operation=operation,
+                             result_summary=f"第 {attempt}/{max_attempts} 次尝试失败", status="WARN")
+            if attempt < max_attempts:
+                time.sleep(1.0 * attempt)
+        if audit:
+            audit.record(tool_name="GlmClient", operation=operation,
+                         result_summary=f"重试 {max_attempts} 次后仍失败", status="ERROR")
+        raise RuntimeError(redact_secrets(f"GLM 请求失败（已尝试 {max_attempts} 次）: {last_err}"))
+
     def chat_completion(
         self,
         messages: List[Dict[str, Any]],
@@ -376,33 +427,11 @@ class GlmClient:
                 payload["tool_choice"] = "auto"
             else:
                 formatted_messages.append({"role": "user", "content": "请基于当前已获得的事实数据，立即输出最终简明回答。"})
-            import time
-            data = None
-            last_err = None
-            for attempt in range(3):
-                try:
-                    resp = requests.post(
-                        url,
-                        headers=headers,
-                        json=payload,
-                        timeout=self.glm_cfg.timeout,
-                    )
-                    if resp.status_code in (401, 403):
-                        last_err = requests.exceptions.HTTPError(f"认证失败 ({resp.status_code}): {resp.text}", response=resp)
-                        break
-                    resp.raise_for_status()
-                    data = resp.json()
-                    break
-                except Exception as e:
-                    last_err = e
-                    time.sleep(1.0 * (attempt + 1))
-
-            if data is None:
-                self.audit.record(tool_name="GlmClient", operation="api_call", result_summary=f"请求失败: {last_err}", status="ERROR")
-                raise RuntimeError(f"GLM-5.3-Flash API 请求失败: {last_err}")
+            data = self._request_with_retry(
+                url, headers, payload, self.glm_cfg.timeout, audit=self.audit)
 
             choice = data["choices"][0]
-            message = choice["message"]
+            message = choice.get("message") or {}
             tool_calls = message.get("tool_calls")
 
             if not tool_calls:
@@ -413,6 +442,13 @@ class GlmClient:
                 # 若无工具调用且内容为空，强制注入催促提示
                 formatted_messages.append({"role": "user", "content": "请基于以上查询结果，直接给出最终的简短结论。"})
                 continue
+
+            if is_last:
+                # 最后一轮不再提供 tools，仍返回工具调用意图时不执行，直接进入最终汇总
+                self.audit.record(
+                    tool_name="GlmClient", operation="chat_completion",
+                    result_summary="最后一轮仍返回 tool_calls，已忽略并进入最终汇总", status="WARN")
+                break
 
             # 执行模型请求的只读工具
             formatted_messages.append(message)
@@ -455,24 +491,27 @@ class GlmClient:
                     "content": redact_secrets(tool_res_str),
                 })
 
+        # 最终汇总阶段：只请求文本，不提供工具，不执行工具调用；保留真实失败原因
+        summary_err = ""
         try:
-            resp = requests.post(
-                url,
-                headers=headers,
-                json={
+            data = self._request_with_retry(
+                url, headers, {
                     "model": self.glm_cfg.model,
                     "messages": formatted_messages + [{"role": "user", "content": "请依据以上所有检索事实，直接回答用户最初的问题。"}],
                     "max_tokens": 800,
-                },
-                timeout=self.glm_cfg.timeout,
-            )
-            ans = resp.json()["choices"][0]["message"].get("content", "").strip()
+                }, self.glm_cfg.timeout, audit=self.audit, operation="final_summary")
+            ans = ((data["choices"][0].get("message") or {}).get("content") or "").strip()
             if ans:
                 return redact_secrets(ans)
-        except Exception:
-            pass
+            summary_err = "最终汇总返回空内容"
+        except Exception as e:
+            summary_err = str(e)
 
-        return "诊断轮次达到上限，请缩小问题范围或指定排查维度。"
+        if summary_err:
+            self.audit.record(tool_name="GlmClient", operation="chat_completion",
+                              result_summary=f"最终汇总失败: {summary_err}", status="ERROR")
+            return f"已达到问答轮次上限，且最终汇总未成功：{summary_err}。请缩小问题范围或指定排查维度后重试。"
+        return "已达到问答轮次上限，最终汇总返回空内容。请缩小问题范围或指定排查维度后重试。"
 
     def generate_text(self, prompt: str, system_prompt: Optional[str] = None, max_tokens: int = 1500) -> str:
         """纯文本直接调用大模型 (用于无工具调用的分析与提纯)"""
